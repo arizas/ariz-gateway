@@ -5,7 +5,7 @@ import { Worker } from 'near-workspaces';
 import { createHash } from 'crypto';
 import nearApi from 'near-api-js';
 
-describe('server', () => {
+describe('server', { only: true }, () => {
     let serverProcess;
     let worker;
     let root;
@@ -30,7 +30,7 @@ describe('server', () => {
         });
         serverEnvironment.ARIZ_GATEWAY_CONTRACT_ID = contract.accountId;
 
-        serverProcess = fork(new URL('index.js', import.meta.url), {
+        serverProcess = fork(new URL('index.mock.js', import.meta.url), {
             env: serverEnvironment,
             stdio: ['pipe', 'pipe', 'pipe', 'ipc']
         });
@@ -104,6 +104,29 @@ describe('server', () => {
 
         equal(response.status, 200);
         equal(await response.text(), 'Your permission to ariz_gateway is: owner');
+    });
+
+    test('get price history', { only: true }, async () => {
+        const token = JSON.stringify({ resource_id: 'ariz_gateway' });
+        const tokenBytes = Buffer.from(token, 'utf8');
+        const hash = createHash('sha256');
+        hash.update(tokenBytes);
+        const token_hash = new Uint8Array(hash.digest());
+        const signature = Array.from(contactAccountKeyPair.sign(token_hash).signature);
+
+        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(token_hash), signature });
+
+        const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`, {
+            headers: {
+                'authorization': `Bearer ${tokenBytes.toString('base64')}`
+            }
+        });
+
+        equal(response.status, 200);
+        const prices = await response.json();
+        equal(prices["2021-09-26"], 7.68236523127079);
+        equal(prices["2024-06-14"], 5.910628180317743);
+        equal(prices["2024-06-23"], 5.172866304874715);
     });
 });
 

@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import nearApi from 'near-api-js';
+import { fetchPriceHistory } from './api/prices.js';
 
 const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT;
 const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID;
@@ -13,7 +14,7 @@ const near = await nearApi.connect({
 });
 
 const server = createServer(async (req, res) => {
-    if (req.url == '/api') {
+    if (req.url.startsWith('/api')) {
         let errorMessage;
         try {
             errorMessage = 'failed to parse token';
@@ -30,7 +31,20 @@ const server = createServer(async (req, res) => {
             try {
                 const permission = await contract.get_token_permission_for_resource({ token_hash, resource_id: token_payload.resource_id });
                 if (permission !== 'none') {
-                    res.write(`Your permission to ${token_payload.resource_id} is: ${permission}`);
+                    const [url, querystring] = req.url.split('?');
+                    switch (url) {
+                        case '/api/prices/currencylist':
+                            res.setHeader('content-type', 'application/json');
+                            res.write(JSON.stringify(await fetchCurrencyList(), null, 1));
+                            break;
+                        case '/api/prices/history':
+                            const search = new URLSearchParams(querystring);
+                            res.setHeader('content-type', 'application/json');
+                            res.write(JSON.stringify(await fetchPriceHistory(search.get('basetoken'), search.get('currency'), search.get('todate')), null, 1));
+                            break;
+                        default:
+                            res.write(`Your permission to ${token_payload.resource_id} is: ${permission}`);
+                    }
                 } else {
                     res.statusCode = 403;
                     res.write(`Your permission to ${token_payload.resource_id} is: ${permission}`); 
@@ -44,6 +58,7 @@ const server = createServer(async (req, res) => {
             res.write(errorMessage);
         }
         res.end();
+
     } else {
         res.write('nothing here');
         res.end();
