@@ -25,9 +25,6 @@ describe('server', { only: true }, () => {
         contactAccountKeyPair = await contract.getKey();
 
         await contract.call(contract.accountId, 'init', {});
-        await contract.call(contract.accountId, 'register_resource', { resource_id: 'ariz_gateway' }, {
-            attachedDeposit: nearApi.utils.format.parseNearAmount('0.1')
-        });
         serverEnvironment.ARIZ_GATEWAY_CONTRACT_ID = contract.accountId;
 
         serverProcess = fork(new URL('index.mock.js', import.meta.url), {
@@ -83,19 +80,21 @@ describe('server', { only: true }, () => {
             }
         });
 
-        equal(response.status, 403);
-        equal(await response.text(), 'Your permission to arizgateway is: none');
+        equal(response.status, 401);
+        equal(await response.text(), 'Unauthorized');
     });
 
     test('connection to api with token that has read access', async () => {
-        const token = JSON.stringify({ resource_id: 'ariz_gateway' });
+        const token = JSON.stringify({ iat: new Date().getTime(), accountId: contract.accountId });
         const tokenBytes = Buffer.from(token, 'utf8');
         const hash = createHash('sha256');
         hash.update(tokenBytes);
         const token_hash = new Uint8Array(hash.digest());
         const signature = Array.from(contactAccountKeyPair.sign(token_hash).signature);
 
-        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(token_hash), signature });
+        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(token_hash), signature }, {
+            attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
+        });
         const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`, {
             headers: {
                 'authorization': `Bearer ${tokenBytes.toString('base64')}`
@@ -103,18 +102,20 @@ describe('server', { only: true }, () => {
         });
 
         equal(response.status, 200);
-        equal(await response.text(), 'Your permission to ariz_gateway is: owner');
+        equal(await response.text(), `Hello ${contract.accountId}` );
     });
 
     test('get price history', { only: true }, async () => {
-        const token = JSON.stringify({ resource_id: 'ariz_gateway' });
+        const token = JSON.stringify({ iat: new Date().getTime(), accountId: contract.accountId });
         const tokenBytes = Buffer.from(token, 'utf8');
         const hash = createHash('sha256');
         hash.update(tokenBytes);
         const token_hash = new Uint8Array(hash.digest());
         const signature = Array.from(contactAccountKeyPair.sign(token_hash).signature);
 
-        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(token_hash), signature });
+        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(token_hash), signature }, {
+            attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
+        });
 
         const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`, {
             headers: {

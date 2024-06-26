@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import nearApi from 'near-api-js';
 import { fetchPriceHistory } from './api/prices.js';
+import { isTokenValidForAccount } from './accesscontrol/tokenverify.js';
 
 const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT;
 const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID;
@@ -24,13 +25,15 @@ const server = createServer(async (req, res) => {
 
             errorMessage = 'failed to connect to access control contract';
             const contract = new nearApi.Contract(await near.account(), contractId, {
-                viewMethods: ['get_token_permission_for_resource']
+                viewMethods: ['get_account_id_for_token']
             });
 
             errorMessage = 'failed to call access control contract';
             try {
-                const permission = await contract.get_token_permission_for_resource({ token_hash, resource_id: token_payload.resource_id });
-                if (permission !== 'none') {
+                const account_id = await contract.get_account_id_for_token({ token_hash });
+                if (
+                    isTokenValidForAccount(account_id, token_payload)
+                ) {
                     const [url, querystring] = req.url.split('?');
                     switch (url) {
                         case '/api/prices/currencylist':
@@ -43,11 +46,11 @@ const server = createServer(async (req, res) => {
                             res.write(JSON.stringify(await fetchPriceHistory(search.get('basetoken'), search.get('currency'), search.get('todate')), null, 1));
                             break;
                         default:
-                            res.write(`Your permission to ${token_payload.resource_id} is: ${permission}`);
+                            res.write(`Hello ${account_id}`);
                     }
                 } else {
-                    res.statusCode = 403;
-                    res.write(`Your permission to ${token_payload.resource_id} is: ${permission}`); 
+                    res.statusCode = 401;
+                    res.write(`Unauthorized`); 
                 }
             } catch(e) {
                 errorMessage = e.toString();
