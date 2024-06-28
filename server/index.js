@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import nearApi from 'near-api-js';
 import { fetchPriceHistory } from './api/prices.js';
-import { isTokenValidForAccount } from './accesscontrol/tokenverify.js';
+import { parseToken, isTokenValidForAccount, isValidSignature } from './accesscontrol/tokenverify.js';
 
 const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT;
 const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID;
@@ -18,21 +18,19 @@ const server = createServer(async (req, res) => {
     if (req.url.startsWith('/api')) {
         let errorMessage;
         try {
-            errorMessage = 'failed to parse token';
-            const token_bytes = Buffer.from(req.headers.authorization.substring('Bearer '.length), 'base64');
-            const token_payload = JSON.parse(new TextDecoder().decode(token_bytes));
-            const token_hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", token_bytes)));
-
-            errorMessage = 'failed to connect to access control contract';
             const contract = new nearApi.Contract(await near.account(), contractId, {
                 viewMethods: ['get_account_id_for_token']
             });
 
+            errorMessage = 'failed to parse token';
+            const {token_hash_bytes, token_payload, token_signature_bytes } = await parseToken(req.headers.authorization);
+            
             errorMessage = 'failed to call access control contract';
             try {
-                const account_id = await contract.get_account_id_for_token({ token_hash });
+                const account_id = await contract.get_account_id_for_token({ token_hash: Array.from(token_hash_bytes) });
                 if (
-                    isTokenValidForAccount(account_id, token_payload)
+                    isTokenValidForAccount(account_id, token_payload) &&
+                    isValidSignature(token_payload.publicKey, token_signature_bytes, token_hash_bytes)
                 ) {
                     const [url, querystring] = req.url.split('?');
                     switch (url) {

@@ -4,8 +4,9 @@ import { equal } from 'node:assert/strict';
 import { Worker } from 'near-workspaces';
 import { createHash } from 'crypto';
 import nearApi from 'near-api-js';
+import { createToken } from './accesscontrol/tokenverify.test.js';
 
-describe('server', { only: true }, () => {
+describe('server', { only: false }, () => {
     let serverProcess;
     let worker;
     let root;
@@ -73,7 +74,7 @@ describe('server', { only: true }, () => {
     });
 
     test('connection to api with token that does not have access', async () => {
-        const token = Buffer.from(JSON.stringify({ resource_id: 'arizgateway' }), 'utf8').toString('base64');
+        const { token } = createToken(contactAccountKeyPair, 'unknown.near');
         const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`, {
             headers: {
                 'authorization': `Bearer ${token}`
@@ -85,41 +86,31 @@ describe('server', { only: true }, () => {
     });
 
     test('connection to api with token that has read access', async () => {
-        const token = JSON.stringify({ iat: new Date().getTime(), accountId: contract.accountId });
-        const tokenBytes = Buffer.from(token, 'utf8');
-        const hash = createHash('sha256');
-        hash.update(tokenBytes);
-        const token_hash = new Uint8Array(hash.digest());
-        const signature = Array.from(contactAccountKeyPair.sign(token_hash).signature);
+        const { token, tokenHash, signatureBytes } = createToken(contactAccountKeyPair, contract.accountId);
 
-        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(token_hash), signature }, {
+        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(tokenHash), signature: Array.from(signatureBytes) }, {
             attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
         });
         const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`, {
             headers: {
-                'authorization': `Bearer ${tokenBytes.toString('base64')}`
+                'authorization': `Bearer ${token}`
             }
         });
 
+        equal(await response.text(), `Hello ${contract.accountId}`);
         equal(response.status, 200);
-        equal(await response.text(), `Hello ${contract.accountId}` );
     });
 
-    test('get price history', { only: true }, async () => {
-        const token = JSON.stringify({ iat: new Date().getTime(), accountId: contract.accountId });
-        const tokenBytes = Buffer.from(token, 'utf8');
-        const hash = createHash('sha256');
-        hash.update(tokenBytes);
-        const token_hash = new Uint8Array(hash.digest());
-        const signature = Array.from(contactAccountKeyPair.sign(token_hash).signature);
+    test('get price history', async () => {
+        const { token, tokenHash, signatureBytes } = createToken(contactAccountKeyPair, contract.accountId);
 
-        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(token_hash), signature }, {
+        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(tokenHash), signature: Array.from(signatureBytes) }, {
             attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
         });
 
         const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`, {
             headers: {
-                'authorization': `Bearer ${tokenBytes.toString('base64')}`
+                'authorization': `Bearer ${token}`
             }
         });
 
