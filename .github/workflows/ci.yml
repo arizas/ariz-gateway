@@ -35,7 +35,7 @@ jobs:
 
       - name: Test Rust project
         working-directory: contract
-        run: cargo near test
+        run: cargo test
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
