@@ -32,9 +32,10 @@ await account.functionCall({
     args,
     attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
 });
-const response = await fetch(`https://arizgateway.azurewebsites.net/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`, {
+const response = await fetch(`https://arizgateway.azurewebsites.net/api/prices/history?basetoken=near&currency=nok&todate=2024-07-05`, {
     headers: {
         'authorization': `Bearer ${tokenObj.token}`
     }
 }).then(r => r.text());
 console.log(response);
+console.log(tokenObj.token);

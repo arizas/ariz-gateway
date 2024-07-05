@@ -23,8 +23,8 @@ const server = createServer(async (req, res) => {
             });
 
             errorMessage = 'failed to parse token';
-            const {token_hash_bytes, token_payload, token_signature_bytes } = await parseToken(req.headers.authorization);
-            
+            const { token_hash_bytes, token_payload, token_signature_bytes } = await parseToken(req.headers.authorization);
+
             errorMessage = 'failed to call access control contract';
             try {
                 const account_id = await contract.get_account_id_for_token({ token_hash: Array.from(token_hash_bytes) });
@@ -36,11 +36,13 @@ const server = createServer(async (req, res) => {
                     switch (url) {
                         case '/api/prices/currencylist':
                             res.setHeader('content-type', 'application/json');
+                            res.setHeader('Access-Control-Allow-Origin', '*');
                             res.write(JSON.stringify(await fetchCurrencyList(), null, 1));
                             break;
                         case '/api/prices/history':
                             const search = new URLSearchParams(querystring);
                             res.setHeader('content-type', 'application/json');
+                            res.setHeader('Access-Control-Allow-Origin', '*');
                             res.write(JSON.stringify(await fetchPriceHistory(search.get('basetoken'), search.get('currency'), search.get('todate')), null, 1));
                             break;
                         default:
@@ -48,11 +50,11 @@ const server = createServer(async (req, res) => {
                     }
                 } else {
                     res.statusCode = 401;
-                    res.write(`Unauthorized`); 
+                    res.write(`Unauthorized`);
                 }
-            } catch(e) {
+            } catch (e) {
                 errorMessage = e.toString();
-                throw(e);
+                throw (e);
             }
         } catch (e) {
             res.statusCode = 401;
