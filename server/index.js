@@ -3,10 +3,10 @@ import nearApi from 'near-api-js';
 import { fetchPriceHistory } from './api/prices.js';
 import { parseToken, isTokenValidForAccount, isValidSignature } from './accesscontrol/tokenverify.js';
 
-const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT;
-const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID;
-const networkId = process.env.ARIZ_GATEWAY_NEAR_NETWORK_ID;
-const nodeUrl = process.env.ARIZ_GATEWAY_NODE_URL;
+const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT ?? 15000;
+const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID ?? 'arizportfolio.testnet';
+const networkId = process.env.ARIZ_GATEWAY_NEAR_NETWORK_ID ?? 'testnet';
+const nodeUrl = process.env.ARIZ_GATEWAY_NODE_URL ?? 'rpc.testnet.near.org';
 
 const near = await nearApi.connect({
     networkId,
