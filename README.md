@@ -16,3 +16,9 @@ ARIZ_GATEWAY_PORT=15000
 ARIZ_GATEWAY_CONTRACT_ID=arizportfolio.testnet
 ARIZ_GATEWAY_NEAR_NETWORK_ID=testnet
 ```
+
+You can then start the server like this
+
+```bash
+env $(grep -v '^#' .env) yarn start
+```
