@@ -22,16 +22,19 @@ const tokenObj = { token: `${tokenBytes.toString('base64')}.${signatureBytes.toS
 const connection = await nearApi.connect(connectionConfig);
 const account = await connection.account(accountId);
 
+const args = {
+    token_hash: Array.from(tokenHash), signature: Array.from(signatureBytes)
+};
+
 await account.functionCall({
     contractId: 'arizportfolio.testnet',
     methodName: 'register_token',
-    args: {
-        token_hash: Array.from(tokenHash), signature: Array.from(signatureBytes)
-    }, attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
+    args,
+    attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
 });
 const response = await fetch(`https://arizgateway.azurewebsites.net/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`, {
     headers: {
         'authorization': `Bearer ${tokenObj.token}`
     }
-});
-console.log(await response.then(r => r.text()));
+}).then(r => r.text());
+console.log(response);

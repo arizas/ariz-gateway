@@ -6,7 +6,7 @@ import { parseToken, isTokenValidForAccount, isValidSignature } from './accessco
 const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT ?? 15000;
 const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID ?? 'arizportfolio.testnet';
 const networkId = process.env.ARIZ_GATEWAY_NEAR_NETWORK_ID ?? 'testnet';
-const nodeUrl = process.env.ARIZ_GATEWAY_NODE_URL ?? 'rpc.testnet.near.org';
+const nodeUrl = process.env.ARIZ_GATEWAY_NODE_URL ?? 'https://rpc.testnet.near.org';
 
 const near = await nearApi.connect({
     networkId,
