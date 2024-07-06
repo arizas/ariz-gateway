@@ -2,12 +2,10 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "start": "env $(grep -v '^#' .env) node server/index.js",
+    "start": "node server/index.js",
     "test": "node --test"
   },
-  "dependencies": {
-    "near-api-js": "^4.0.2"
-  },
+  "dependencies": {},
   "devDependencies": {
     "near-workspaces": "^3.5.0"
   }

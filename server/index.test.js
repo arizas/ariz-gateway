@@ -4,8 +4,9 @@ import { equal } from 'node:assert/strict';
 import { Worker } from 'near-workspaces';
 import { createHash } from 'crypto';
 import nearApi from 'near-api-js';
+import { createToken } from './accesscontrol/tokenverify.test.js';
 
-describe('server', () => {
+describe('server', { only: false }, () => {
     let serverProcess;
     let worker;
     let root;
@@ -25,12 +26,9 @@ describe('server', () => {
         contactAccountKeyPair = await contract.getKey();
 
         await contract.call(contract.accountId, 'init', {});
-        await contract.call(contract.accountId, 'register_resource', { resource_id: 'ariz_gateway' }, {
-            attachedDeposit: nearApi.utils.format.parseNearAmount('0.1')
-        });
         serverEnvironment.ARIZ_GATEWAY_CONTRACT_ID = contract.accountId;
 
-        serverProcess = fork(new URL('index.js', import.meta.url), {
+        serverProcess = fork(new URL('index.mock.js', import.meta.url), {
             env: serverEnvironment,
             stdio: ['pipe', 'pipe', 'pipe', 'ipc']
         });
@@ -76,34 +74,58 @@ describe('server', () => {
     });
 
     test('connection to api with token that does not have access', async () => {
-        const token = Buffer.from(JSON.stringify({ resource_id: 'arizgateway' }), 'utf8').toString('base64');
+        const { token } = createToken(contactAccountKeyPair, 'unknown.near');
         const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`, {
             headers: {
                 'authorization': `Bearer ${token}`
             }
         });
 
-        equal(response.status, 403);
-        equal(await response.text(), 'Your permission to arizgateway is: none');
+        equal(response.status, 401);
+        equal(await response.text(), 'Unauthorized');
     });
 
     test('connection to api with token that has read access', async () => {
-        const token = JSON.stringify({ resource_id: 'ariz_gateway' });
-        const tokenBytes = Buffer.from(token, 'utf8');
-        const hash = createHash('sha256');
-        hash.update(tokenBytes);
-        const token_hash = new Uint8Array(hash.digest());
-        const signature = Array.from(contactAccountKeyPair.sign(token_hash).signature);
+        const { token, tokenHash, signatureBytes, publicKeyBytes } = createToken(contactAccountKeyPair, contract.accountId);
 
-        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(token_hash), signature });
+        await contract.call(contract.accountId, 'register_token', {
+            token_hash: Array.from(tokenHash),
+            signature: Array.from(signatureBytes), public_key: Array.from(publicKeyBytes)
+        }, {
+            attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
+        });
         const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`, {
             headers: {
-                'authorization': `Bearer ${tokenBytes.toString('base64')}`
+                'authorization': `Bearer ${token}`
+            }
+        });
+
+        equal(await response.text(), `Hello ${contract.accountId}`);
+        equal(response.status, 200);
+    });
+
+    test('get price history', async () => {
+        const { token, tokenHash, signatureBytes, publicKeyBytes } = createToken(contactAccountKeyPair, contract.accountId);
+
+        await contract.call(contract.accountId, 'register_token', {
+            token_hash: Array.from(tokenHash),
+            signature: Array.from(signatureBytes),
+            public_key: Array.from(publicKeyBytes)
+        }, {
+            attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
+        });
+
+        const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`, {
+            headers: {
+                'authorization': `Bearer ${token}`
             }
         });
 
         equal(response.status, 200);
-        equal(await response.text(), 'Your permission to ariz_gateway is: owner');
+        const prices = await response.json();
+        equal(prices["2021-09-26"], 7.68236523127079);
+        equal(prices["2024-06-14"], 5.910628180317743);
+        equal(prices["2024-06-23"], 5.172866304874715);
     });
 });
 
