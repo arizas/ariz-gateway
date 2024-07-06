@@ -16,6 +16,13 @@ const near = await nearApi.connect({
 
 const server = createServer(async (req, res) => {
     if (req.url.startsWith('/api')) {
+        
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        if (req.method === 'OPTIONS') {
+            res.setHeader('Access-Control-Allow-Headers', '*');
+            res.end();
+            return;
+        }
         let errorMessage;
         try {
             const contract = new nearApi.Contract(await near.account(), contractId, {
@@ -35,14 +42,12 @@ const server = createServer(async (req, res) => {
                     const [url, querystring] = req.url.split('?');
                     switch (url) {
                         case '/api/prices/currencylist':
-                            res.setHeader('content-type', 'application/json');
-                            res.setHeader('Access-Control-Allow-Origin', '*');
+                            res.setHeader('content-type', 'application/json');                            
                             res.write(JSON.stringify(await fetchCurrencyList(), null, 1));
                             break;
                         case '/api/prices/history':
                             const search = new URLSearchParams(querystring);
                             res.setHeader('content-type', 'application/json');
-                            res.setHeader('Access-Control-Allow-Origin', '*');
                             res.write(JSON.stringify(await fetchPriceHistory(search.get('basetoken'), search.get('currency'), search.get('todate')), null, 1));
                             break;
                         default:
