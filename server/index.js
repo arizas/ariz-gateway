@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import nearApi from 'near-api-js';
-import { fetchPriceHistory } from './api/prices.js';
+import { fetchPriceHistory, fetchCurrencyList } from './api/prices.js';
 import { parseToken, isTokenValidForAccount, isValidSignature } from './accesscontrol/tokenverify.js';
 
 const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT ?? 15000;
