@@ -31,18 +31,20 @@ impl Contract {
         contract
     }
 
-    fn internal_register_token(&mut self, token_hash: Vec<u8>, signature: Vec<u8>) {
+    fn internal_register_token(
+        &mut self,
+        token_hash: Vec<u8>,
+        signature: Vec<u8>,
+        public_key: Vec<u8>,
+    ) {
         if token_hash.len() > 64 {
             env::panic_str("Token hashes larger than 64 bytes are not supported")
         }
 
-        let mut pk_array: [u8; 32] = [0u8; 32];
-        pk_array.copy_from_slice(&env::signer_account_pk().as_bytes()[1..33]);
-
         if !env::ed25519_verify(
             signature.as_slice().try_into().unwrap(),
             token_hash.as_slice(),
-            &pk_array,
+            public_key.as_slice().try_into().unwrap(),
         ) {
             env::panic_str("Invalid token signature");
         }
@@ -51,12 +53,12 @@ impl Contract {
     }
 
     #[payable]
-    pub fn register_token(&mut self, token_hash: Vec<u8>, signature: Vec<u8>) {
+    pub fn register_token(&mut self, token_hash: Vec<u8>, signature: Vec<u8>, public_key: Vec<u8>) {
         if env::attached_deposit() != NearToken::from_millinear(200) {
             env::panic_str("You must deposit 0.2 NEAR to register a token");
         }
 
-        self.internal_register_token(token_hash, signature);
+        self.internal_register_token(token_hash, signature, public_key.to_vec());
     }
 
     pub fn replace_token(
@@ -74,7 +76,10 @@ impl Contract {
             env::panic_str("old token does not belong to you");
         }
 
-        self.internal_register_token(new_token_hash, signature);
+        let mut pk_array: [u8; 32] = [0u8; 32];
+        pk_array.copy_from_slice(&env::signer_account_pk().as_bytes()[1..33].to_vec());
+
+        self.internal_register_token(new_token_hash, signature, pk_array.to_vec());
         self.tokens.remove(&old_token_hash);
     }
 
@@ -119,8 +124,8 @@ pub mod tests {
     fn test_known_token() {
         let mut csprng = OsRng {};
         let signing_key = SigningKey::generate(&mut csprng);
-        let keypair_bytes = signing_key.to_keypair_bytes();
-        let public_key_bytes = &keypair_bytes[32..];
+        let verifying_key = signing_key.verifying_key();
+        let public_key_bytes = verifying_key.as_bytes();
         let pk = PublicKey::from_parts(CurveType::ED25519, public_key_bytes.to_vec()).unwrap();
 
         testing_env!(VMContextBuilder::new()
@@ -134,7 +139,7 @@ pub mod tests {
         let token_hash = sha256("{\"id\": \"1\"}".as_bytes());
         let signature = signing_key.sign(&token_hash).to_vec();
 
-        contract.register_token(token_hash.clone(), signature);
+        contract.register_token(token_hash.clone(), signature, public_key_bytes.to_vec());
 
         assert_eq!(
             accounts(0).to_string(),
@@ -146,13 +151,13 @@ pub mod tests {
     fn test_replace_token() {
         let mut csprng = OsRng {};
         let signing_key = SigningKey::generate(&mut csprng);
-        let keypair_bytes = signing_key.to_keypair_bytes();
-        let public_key_bytes = &keypair_bytes[32..];
+        let verifying_key = signing_key.verifying_key();
+        let public_key_bytes = verifying_key.to_bytes();
         let pk = PublicKey::from_parts(CurveType::ED25519, public_key_bytes.to_vec()).unwrap();
 
         testing_env!(VMContextBuilder::new()
             .signer_account_id(accounts(0))
-            .signer_account_pk(pk)
+            .signer_account_pk(pk.clone())
             .attached_deposit(NearToken::from_millinear(200))
             .build());
 
@@ -161,7 +166,7 @@ pub mod tests {
         let token_hash = sha256("{\"id\": \"1\"}".as_bytes());
         let signature = signing_key.sign(&token_hash).to_vec();
 
-        contract.register_token(token_hash.clone(), signature);
+        contract.register_token(token_hash.clone(), signature, public_key_bytes.to_vec());
 
         assert_eq!(
             accounts(0).to_string(),

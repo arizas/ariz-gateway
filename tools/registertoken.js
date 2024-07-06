@@ -23,7 +23,8 @@ const connection = await nearApi.connect(connectionConfig);
 const account = await connection.account(accountId);
 
 const args = {
-    token_hash: Array.from(tokenHash), signature: Array.from(signatureBytes)
+    token_hash: Array.from(tokenHash), signature: Array.from(signatureBytes),
+    public_key: Array.from(keyPair.getPublicKey().data)
 };
 
 await account.functionCall({

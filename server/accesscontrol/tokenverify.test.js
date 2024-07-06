@@ -11,7 +11,7 @@ export function createToken(keyPair, accountId) {
     hash.update(tokenBytes);
     const tokenHash = new Uint8Array(hash.digest());
     const signatureBytes = Buffer.from(keyPair.sign(tokenHash).signature);
-    return { token: `${tokenBytes.toString('base64')}.${signatureBytes.toString('base64')}`, tokenHash, signatureBytes };
+    return { token: `${tokenBytes.toString('base64')}.${signatureBytes.toString('base64')}`, tokenHash, signatureBytes, publicKeyBytes: keyPair.publicKey.data };
 }
 
 describe.only('verify tokens', () => {

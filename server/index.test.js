@@ -86,9 +86,12 @@ describe('server', { only: false }, () => {
     });
 
     test('connection to api with token that has read access', async () => {
-        const { token, tokenHash, signatureBytes } = createToken(contactAccountKeyPair, contract.accountId);
+        const { token, tokenHash, signatureBytes, publicKeyBytes } = createToken(contactAccountKeyPair, contract.accountId);
 
-        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(tokenHash), signature: Array.from(signatureBytes) }, {
+        await contract.call(contract.accountId, 'register_token', {
+            token_hash: Array.from(tokenHash),
+            signature: Array.from(signatureBytes), public_key: Array.from(publicKeyBytes)
+        }, {
             attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
         });
         const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`, {
@@ -102,9 +105,13 @@ describe('server', { only: false }, () => {
     });
 
     test('get price history', async () => {
-        const { token, tokenHash, signatureBytes } = createToken(contactAccountKeyPair, contract.accountId);
+        const { token, tokenHash, signatureBytes, publicKeyBytes } = createToken(contactAccountKeyPair, contract.accountId);
 
-        await contract.call(contract.accountId, 'register_token', { token_hash: Array.from(tokenHash), signature: Array.from(signatureBytes) }, {
+        await contract.call(contract.accountId, 'register_token', {
+            token_hash: Array.from(tokenHash),
+            signature: Array.from(signatureBytes),
+            public_key: Array.from(publicKeyBytes)
+        }, {
             attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
         });
 
