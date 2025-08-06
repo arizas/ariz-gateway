@@ -1,0 +1,26 @@
+name = "near-rpc-proxy"
+main = "near-rpc-proxy.js"
+compatibility_date = "2024-01-01"
+
+# Environment variables
+[vars]
+# Set your RPC URL with API key in the path
+# Example: NEAR_RPC_URL = "https://near.nownodes.io/your-api-key-here"
+
+# Routes (customize for your domain)
+# routes = [
+#   { pattern = "api.yourdomain.com/near-rpc", zone_name = "yourdomain.com" }
+# ]
+
+# Or use workers.dev subdomain for testing
+# workers_dev = true
+
+# Development settings
+[env.development]
+vars = { NEAR_RPC_URL = "https://rpc.mainnet.near.org" }
+
+# Production settings
+[env.production]
+# Use wrangler secret to set the full URL with API key:
+# wrangler secret put NEAR_RPC_URL
+# Then enter: https://near.nownodes.io/your-api-key-here

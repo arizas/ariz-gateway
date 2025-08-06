@@ -1,0 +1,15 @@
+{
+  "name": "near-rpc-proxy-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:production": "wrangler deploy --env production",
+    "tail": "wrangler tail",
+    "secret:set-rpc-url": "wrangler secret put NEAR_RPC_URL --env production"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
