@@ -6,10 +6,14 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "deploy:production": "wrangler deploy --env production",
+    "deploy:auth": "wrangler deploy near-rpc-proxy-with-auth.js --env production",
     "tail": "wrangler tail",
-    "secret:set-rpc-url": "wrangler secret put NEAR_RPC_URL --env production"
+    "secret:set-rpc-url": "wrangler secret put NEAR_RPC_URL --env production",
+    "test": "node --test",
+    "test:live": "node test-auth-proxy.js"
   },
   "devDependencies": {
+    "near-api-js": "^3.0.4",
     "wrangler": "^3.0.0"
   }
 }
