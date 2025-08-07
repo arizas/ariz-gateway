@@ -9,7 +9,7 @@
     "tail": "wrangler tail",
     "secret:set-rpc-url": "wrangler secret put NEAR_RPC_URL --env production",
     "secret:enable-auth": "wrangler secret put ENABLE_AUTH --env production",
-    "test": "node --test"
+    "test": "node --test '*.test.js'"
   },
   "devDependencies": {
     "near-api-js": "^3.0.4",
