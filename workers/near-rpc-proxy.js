@@ -1,3 +1,5 @@
+import { base58Decode } from './base58.js';
+
 const TOKEN_EXPIRY_MILLIS = 5 * 60 * 1000;
 
 async function parseToken(authorizationHeader) {
@@ -65,13 +67,10 @@ async function isValidSignature(publicKey, signatureBuffer, messageBuffer) {
       throw new Error('Only ED25519 keys are supported');
     }
     
-    // Convert base58 to raw bytes (NEAR uses base58 for public keys)
-    // For a full implementation, you'd need a base58 decoder
-    // For now, we'll use a simplified approach assuming the key is already in the right format
+    // Convert base58 to raw bytes
+    const publicKeyBytes = base58Decode(keyData);
     
     // Import the public key for ED25519 verification
-    const publicKeyBytes = base58ToBytes(keyData); // You'd need to implement base58ToBytes
-    
     const cryptoKey = await crypto.subtle.importKey(
       'raw',
       publicKeyBytes,
@@ -94,13 +93,6 @@ async function isValidSignature(publicKey, signatureBuffer, messageBuffer) {
     console.error('Signature verification error:', error);
     return false;
   }
-}
-
-// Helper function to decode base58 (simplified - you'd want a proper implementation)
-function base58ToBytes(base58String) {
-  // This is a placeholder - in production, use a proper base58 decoder
-  // For now, this will throw an error to indicate it needs implementation
-  throw new Error('Base58 decoding not implemented - use a library like bs58');
 }
 
 export default {

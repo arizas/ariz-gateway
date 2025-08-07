@@ -84,16 +84,7 @@ When authentication is enabled (`ENABLE_AUTH='true'`), the proxy implements the 
 1. **Token Format**: Bearer token with base64-encoded payload and signature
 2. **Contract Verification**: Checks if token hash exists in NEAR smart contract
 3. **Token Expiry**: Tokens valid for 5 minutes
-4. **Signature Validation**: ED25519 signature verification (requires base58 decoder library)
-
-### Note on Signature Verification
-
-The Cloudflare Worker version includes the structure for ED25519 signature verification using the Web Crypto API, but requires a base58 decoder library (like `bs58`) to fully implement it. The Node.js version uses `near-api-js` which includes this functionality.
-
-For production use with full signature verification, you would need to:
-1. Add a base58 decoder library compatible with Cloudflare Workers
-2. Or use a WASM-compiled version of the verification logic
-3. Or rely solely on the contract verification for security
+4. **Signature Validation**: Full ED25519 signature verification using Web Crypto API
 
 ### Token Payload Structure
 ```json
