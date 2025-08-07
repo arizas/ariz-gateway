@@ -4,8 +4,12 @@ compatibility_date = "2024-01-01"
 
 # Environment variables
 [vars]
+# Authentication is disabled by default. Set to 'true' to enable
+ENABLE_AUTH = "false"
+# Contract for token verification (when auth is enabled)
+CONTRACT_ID = "arizportfolio.near"
 # Set your RPC URL with API key in the path
-# Example: NEAR_RPC_URL = "https://near.nownodes.io/your-api-key-here"
+# Example: NEAR_RPC_URL = "https://near.lava.build/your-api-key-here"
 
 # Routes (customize for your domain)
 # routes = [
@@ -22,5 +26,5 @@ vars = { NEAR_RPC_URL = "https://rpc.mainnet.near.org" }
 # Production settings
 [env.production]
 # Use wrangler secret to set the full URL with API key:
-# wrangler secret put NEAR_RPC_URL
-# Then enter: https://near.nownodes.io/your-api-key-here
+# wrangler secret put NEAR_RPC_URL --env production
+# Then enter: https://near.lava.build/your-api-key-here
