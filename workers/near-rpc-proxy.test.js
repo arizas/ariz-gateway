@@ -44,7 +44,7 @@ describe('NEAR RPC Proxy with Auth', () => {
     before(async () => {
         // Start the worker with test configuration
         worker = await unstable_dev(
-            'near-rpc-proxy-with-auth.js',
+            'near-rpc-proxy.js',
             {
                 experimental: { disableExperimentalWarning: true },
                 vars: {
@@ -150,7 +150,7 @@ describe('NEAR RPC Proxy with Auth', () => {
     test('should forward RPC request when auth is disabled', async () => {
         // Create a worker with auth disabled
         const noAuthWorker = await unstable_dev(
-            'near-rpc-proxy-with-auth.js',
+            'near-rpc-proxy.js',
             {
                 experimental: { disableExperimentalWarning: true },
                 vars: {
@@ -182,7 +182,7 @@ describe('NEAR RPC Proxy with Auth', () => {
     test('should handle proxy errors gracefully', async () => {
         // Create a worker with invalid upstream URL
         const errorWorker = await unstable_dev(
-            'near-rpc-proxy-with-auth.js',
+            'near-rpc-proxy.js',
             {
                 experimental: { disableExperimentalWarning: true },
                 vars: {
