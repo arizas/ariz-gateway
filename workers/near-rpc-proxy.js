@@ -1,6 +1,6 @@
 import { base58Decode } from './base58.js';
 
-const TOKEN_EXPIRY_MILLIS = 5 * 60 * 1000;
+const TOKEN_EXPIRY_MILLIS = 24 * 60 * 60 * 1000;
 
 async function parseToken(authorizationHeader) {
   if (!authorizationHeader || !authorizationHeader.startsWith('Bearer ')) {
@@ -58,7 +58,7 @@ function isTokenValidForAccount(accountId, tokenPayload) {
 
 async function verifyNearContract(tokenHashBytes, env) {
   // Call NEAR RPC to check if token exists in contract
-  const rpcUrl = env.NEAR_NODE_URL || 'https://rpc.mainnet.near.org';
+  const rpcUrl = env.NEAR_RPC_URL;
   const contractId = env.CONTRACT_ID || 'arizportfolio.near';
   
   const response = await fetch(rpcUrl, {
@@ -213,7 +213,19 @@ export default {
       const requestBody = await request.text();
       
       // Forward request to NEAR RPC endpoint (URL includes API key in path)
-      const upstreamUrl = env.NEAR_RPC_URL || 'https://rpc.mainnet.near.org';
+      const upstreamUrl = env.NEAR_RPC_URL;
+      if (!upstreamUrl) {
+        return new Response(
+          JSON.stringify({ error: 'Missing NEAR_RPC_URL value' }), 
+          {
+            status: 500,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
       const upstreamResponse = await fetch(upstreamUrl, {
         method: 'POST',
         headers: {
