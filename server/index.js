@@ -1,76 +1,79 @@
 import { createServer } from 'node:http';
-import nearApi from 'near-api-js';
 import { fetchPriceHistory, fetchCurrencyList } from './api/prices.js';
-import { parseToken, isTokenValidForAccount, isValidSignature } from './accesscontrol/tokenverify.js';
+import { createAuthenticate } from './accesscontrol/middleware.js';
+import { createRpcHandler } from './rpc.js';
 
 const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT ?? 15000;
 const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID ?? 'arizportfolio.testnet';
 const networkId = process.env.ARIZ_GATEWAY_NEAR_NETWORK_ID ?? 'testnet';
 const nodeUrl = process.env.ARIZ_GATEWAY_NODE_URL ?? 'https://rpc.testnet.near.org';
 
-const near = await nearApi.connect({
-    networkId,
-    contractId,
-    nodeUrl
-});
+const authenticate = await createAuthenticate({ networkId, contractId, nodeUrl });
+const handleRpc = createRpcHandler({ nodeUrl });
+
+function requiresAuth(pathname) {
+    return pathname.startsWith('/api/') || pathname === '/rpc';
+}
+
+async function dispatch(req, res, pathname, querystring, accountId) {
+    if (pathname === '/api/prices/currencylist') {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(await fetchCurrencyList(), null, 1));
+        return;
+    }
+    if (pathname === '/api/prices/history') {
+        const search = new URLSearchParams(querystring);
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(
+            await fetchPriceHistory(search.get('basetoken'), search.get('currency'), search.get('todate')),
+            null,
+            1
+        ));
+        return;
+    }
+    if (pathname === '/rpc') {
+        await handleRpc(req, res);
+        return;
+    }
+    res.statusCode = 404;
+    res.end('Not found');
+}
 
 const server = createServer(async (req, res) => {
-    if (req.url.startsWith('/api')) {
-        
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        if (req.method === 'OPTIONS') {
-            res.setHeader('Access-Control-Allow-Headers', '*');
+    const [pathname, querystring] = req.url.split('?');
+
+    if (!requiresAuth(pathname)) {
+        res.end('nothing here');
+        return;
+    }
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Headers', '*');
+        res.end();
+        return;
+    }
+
+    let accountId;
+    try {
+        ({ accountId } = await authenticate(req));
+    } catch (err) {
+        res.statusCode = err.statusCode ?? 401;
+        res.end(err.message);
+        return;
+    }
+
+    try {
+        await dispatch(req, res, pathname, querystring, accountId);
+    } catch {
+        if (!res.headersSent) {
+            res.statusCode = 500;
+            res.end('Internal error');
+        } else {
             res.end();
-            return;
         }
-        let errorMessage;
-        try {
-            const contract = new nearApi.Contract(await near.account(), contractId, {
-                viewMethods: ['get_account_id_for_token']
-            });
-
-            errorMessage = 'failed to parse token';
-            const { token_hash_bytes, token_payload, token_signature_bytes } = await parseToken(req.headers.authorization);
-
-            errorMessage = 'failed to call access control contract';
-            try {
-                const account_id = await contract.get_account_id_for_token({ token_hash: Array.from(token_hash_bytes) });
-                if (
-                    isTokenValidForAccount(account_id, token_payload) &&
-                    isValidSignature(token_payload.publicKey, token_signature_bytes, token_hash_bytes)
-                ) {
-                    const [url, querystring] = req.url.split('?');
-                    switch (url) {
-                        case '/api/prices/currencylist':
-                            res.setHeader('content-type', 'application/json');                            
-                            res.write(JSON.stringify(await fetchCurrencyList(), null, 1));
-                            break;
-                        case '/api/prices/history':
-                            const search = new URLSearchParams(querystring);
-                            res.setHeader('content-type', 'application/json');
-                            res.write(JSON.stringify(await fetchPriceHistory(search.get('basetoken'), search.get('currency'), search.get('todate')), null, 1));
-                            break;
-                        default:
-                            res.write(`Hello ${account_id}`);
-                    }
-                } else {
-                    res.statusCode = 401;
-                    res.write(`Unauthorized`);
-                }
-            } catch (e) {
-                errorMessage = e.toString();
-                throw (e);
-            }
-        } catch (e) {
-            res.statusCode = 401;
-            res.write(errorMessage);
-        }
-        res.end();
-
-    } else {
-        res.write('nothing here');
-        res.end();
     }
 });
+
 await new Promise(resolve => server.listen(SERVER_PORT, () => resolve()));
 console.log('server listening at port', SERVER_PORT);
