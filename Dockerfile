@@ -6,7 +6,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json yarn.lock ./
-RUN yarn
+RUN yarn install --production --frozen-lockfile
 
 COPY server server
 COPY contract contract
