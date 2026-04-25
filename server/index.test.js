@@ -2,7 +2,6 @@ import { test, before, after, describe } from 'node:test';
 import { fork } from 'child_process';
 import { equal } from 'node:assert/strict';
 import { Worker } from 'near-workspaces';
-import { createHash } from 'crypto';
 import nearApi from 'near-api-js';
 import { createToken } from './accesscontrol/tokenverify.test.js';
 
@@ -62,64 +61,54 @@ describe('server', { only: false }, () => {
         await worker.tearDown();
     });
 
+    const baseUrl = () => `http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}`;
+
+    async function registerToken() {
+        const created = createToken(contactAccountKeyPair, contract.accountId);
+        await contract.call(contract.accountId, 'register_token', {
+            token_hash: Array.from(created.tokenHash),
+            signature: Array.from(created.signatureBytes),
+            public_key: Array.from(created.publicKeyBytes)
+        }, {
+            attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
+        });
+        return created;
+    }
+
     test('connect and get default response', async () => {
-        const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}`);
+        const response = await fetch(baseUrl());
         equal(await response.text(), 'nothing here');
     });
 
-    test('unauthenticated connection to api', async () => {
-        const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`);
+    test('unauthenticated /api/prices/currencylist is rejected', async () => {
+        const response = await fetch(`${baseUrl()}/api/prices/currencylist`);
         equal(response.status, 401);
         equal(await response.text(), 'failed to parse token');
     });
 
-    test('connection to api with token that does not have access', async () => {
+    test('unauthenticated /rpc is rejected', async () => {
+        const response = await fetch(`${baseUrl()}/rpc`, { method: 'POST', body: '{}' });
+        equal(response.status, 401);
+        equal(await response.text(), 'failed to parse token');
+    });
+
+    test('/api with token whose account is not registered is Unauthorized', async () => {
         const { token } = createToken(contactAccountKeyPair, 'unknown.near');
-        const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`, {
-            headers: {
-                'authorization': `Bearer ${token}`
-            }
+        const response = await fetch(`${baseUrl()}/api/prices/currencylist`, {
+            headers: { 'authorization': `Bearer ${token}` }
         });
 
         equal(response.status, 401);
         equal(await response.text(), 'Unauthorized');
     });
 
-    test('connection to api with token that has read access', async () => {
-        const { token, tokenHash, signatureBytes, publicKeyBytes } = createToken(contactAccountKeyPair, contract.accountId);
+    test('get price history with registered token', async () => {
+        const { token } = await registerToken();
 
-        await contract.call(contract.accountId, 'register_token', {
-            token_hash: Array.from(tokenHash),
-            signature: Array.from(signatureBytes), public_key: Array.from(publicKeyBytes)
-        }, {
-            attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
-        });
-        const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api`, {
-            headers: {
-                'authorization': `Bearer ${token}`
-            }
-        });
-
-        equal(await response.text(), `Hello ${contract.accountId}`);
-        equal(response.status, 200);
-    });
-
-    test('get price history', async () => {
-        const { token, tokenHash, signatureBytes, publicKeyBytes } = createToken(contactAccountKeyPair, contract.accountId);
-
-        await contract.call(contract.accountId, 'register_token', {
-            token_hash: Array.from(tokenHash),
-            signature: Array.from(signatureBytes),
-            public_key: Array.from(publicKeyBytes)
-        }, {
-            attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
-        });
-
-        const response = await fetch(`http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`, {
-            headers: {
-                'authorization': `Bearer ${token}`
-            }
-        });
+        const response = await fetch(
+            `${baseUrl()}/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`,
+            { headers: { 'authorization': `Bearer ${token}` } }
+        );
 
         equal(response.status, 200);
         const prices = await response.json();
@@ -127,5 +116,27 @@ describe('server', { only: false }, () => {
         equal(prices["2024-06-14"], 5.910628180317743);
         equal(prices["2024-06-23"], 5.172866304874715);
     });
-});
 
+    test('/rpc forwards authenticated request to upstream node', async () => {
+        const { token } = await registerToken();
+
+        const response = await fetch(`${baseUrl()}/rpc`, {
+            method: 'POST',
+            headers: {
+                'authorization': `Bearer ${token}`,
+                'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'test',
+                method: 'status',
+                params: []
+            })
+        });
+
+        equal(response.status, 200);
+        const body = await response.json();
+        equal(body.jsonrpc, '2.0');
+        equal(body.id, 'test');
+    });
+});

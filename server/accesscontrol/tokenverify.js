@@ -1,7 +1,7 @@
 import { PublicKey } from 'near-api-js/lib/utils/key_pair.js';
 import crypto from 'node:crypto';
 
-export const TOKEN_EXPIRY_MILLIS = 5 * 60 * 1000;
+export const TOKEN_EXPIRY_MILLIS = 60 * 60 * 1000;
 
 export async function parseToken(authorizationHeader) {
     const token_parts = authorizationHeader.substring('Bearer '.length).split('.');

@@ -5,6 +5,7 @@ Gateway to APIs used by Ariz Portfolio.
 
 - Coingecko
 - Pikespeak
+- NEAR RPC (via Cloudflare Workers)
 
 # Local development setup
 
@@ -22,3 +23,9 @@ You can then start the server like this
 ```bash
 env $(grep -v '^#' .env) yarn start
 ```
+
+# NEAR RPC Proxy (Cloudflare Workers)
+
+For high-volume NEAR RPC requests, we use a Cloudflare Worker proxy to securely handle API keys. See the [workers/README.md](./workers/README.md) for setup and deployment instructions.
+
+This allows the near-account-report application to make RPC calls without exposing API keys on the client side.

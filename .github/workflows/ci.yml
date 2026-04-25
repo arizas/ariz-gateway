@@ -17,13 +17,10 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
-          override: true
-
-      - name: Add wasm32 target
-        run: rustup target add wasm32-unknown-unknown
+          toolchain: 1.86.0
+          targets: wasm32-unknown-unknown
 
       - name: Install cargo-near
         run: |
@@ -31,7 +28,7 @@ jobs:
 
       - name: Build Rust project
         working-directory: contract
-        run: cargo near build
+        run: cargo near build non-reproducible-wasm
 
       - name: Test Rust project
         working-directory: contract
