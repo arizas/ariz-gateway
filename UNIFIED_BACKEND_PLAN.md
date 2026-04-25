@@ -2,6 +2,15 @@
 
 Merge [ariz-gateway](./) and [near-accounting-export](../near-accounting-export) into a single container, plus host filesystem-backed git repos over HTTP from the same container — all behind ariz-gateway's existing NEAR-token auth.
 
+## Slice status
+
+| Slice | Scope | Status | Tracked in |
+| --- | --- | --- | --- |
+| (a) | Foundation: shared auth middleware, router refactor, in-process `/rpc`, retired Cloudflare Worker, Dockerfile rework | **Shipped** | #2 (merged) |
+| (b) | Git over HTTP via `git http-backend` | Not started | (issue TBD) |
+| (c) | Mount `near-accounting-export` in-process at `/api/accounting/*` | Blocked on upstream | petersalomonsen/near-accounting-export#42 |
+| (d) | Prices rework: replace deactivated CoinGecko Pro key, multi-provider, persistent cache, `/api/prices/current` | Not started | #5 |
+
 ## Current state
 
 | Service | Runtime | Port | Auth today |
@@ -9,7 +18,7 @@ Merge [ariz-gateway](./) and [near-accounting-export](../near-accounting-export)
 | ariz-gateway | Node 20, built-in `http` | 15000 | NEAR-signed bearer token verified via `get_account_id_for_token` on the ariz contract |
 | near-accounting-export | Node/TS, Express | 3000 | No bearer auth; registration gated by a NEAR FT payment tx hash |
 
-Auth logic is centralised in [server/accesscontrol/tokenverify.js](./server/accesscontrol/tokenverify.js) and is the piece we want to reuse.
+Auth pipeline lives in [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js) (it builds on the lower-level token parsing/verification primitives in [server/accesscontrol/tokenverify.js](./server/accesscontrol/tokenverify.js)).
 
 Git hosting is new. The near-git-storage Rust server is **not** used here — we use stock `git http-backend` with filesystem repos instead (simpler, no extra runtime, no contract plumbing).
 
@@ -51,14 +60,14 @@ Node's built-in `http` streams request/response bodies, which is what git smart-
 
 Since `PATH_INFO` is constructed server-side from the verified `accountId`, there is no way for a client to request anyone else's repo — access control is enforced by construction, not by a path check.
 
-**NEAR RPC proxy**: port the logic from [workers/near-rpc-proxy.js](./workers/near-rpc-proxy.js) into an in-process handler under `/rpc`. Same token verification as everything else, forwards JSON-RPC calls to the upstream NEAR node. The Cloudflare Worker deployment is retired once this lands.
+**NEAR RPC proxy**: in-process handler at `/rpc` (see [server/rpc.js](./server/rpc.js)). Same token verification as everything else, forwards JSON-RPC calls to the upstream NEAR node. Shipped in slice (a); the Cloudflare Worker deployment was retired in the same PR.
 
 ### Container
 
 Single-stage (or simple two-stage) Dockerfile on `node:20-slim`:
 
 1. **build** (optional stage): install deps, TypeScript-compile anything that needs it.
-2. **runtime**: `node:20-slim` with `apt-get install -y git`. Copy sources + `node_modules`. Declare `VOLUME /data` for `ARIZ_DATA_DIR` (holds both accounting-export's data and the bare git repos under `/data/git/`). Expose only the gateway port.
+2. **runtime**: `node:20-slim` with `apt-get install -y git ca-certificates`, runtime deps installed via `yarn install --production --frozen-lockfile` so devDeps (notably `near-sandbox`, which has no Linux arm64 binary) stay out of the image. Copy sources + `node_modules`. Declare `VOLUME /data` for `ARIZ_DATA_DIR` (holds both accounting-export's data and the bare git repos under `/data/git/`). Expose only the gateway port.
 
 No Rust toolchain, no CGI runner, no s6/tini needed — Node is PID 1.
 
@@ -75,13 +84,15 @@ Drop: `CORS_ALLOWED_ORIGINS`, `REGISTRATION_FEE_*` (no longer the access gate).
 
 ## Migration steps
 
-1. Extract auth into a middleware module; add unit tests.
-2. Refactor [server/index.js](./server/index.js) into an explicit router with the middleware applied uniformly.
-3. Consume `near-accounting-export` as an npm dependency — publish it to npm (or install via git URL, e.g. `"near-accounting-export": "github:PeterSalomonsen/near-accounting-export#<sha>"`, while unpublished). Upstream changes needed there: remove its own auth/CORS, expose a `createRouter()` (or `mount(app, opts)`) entry point from `package.json` that accepts a `getAccountId(req)` hook, and start its background sync worker via an exported `startWorker({ dataDir })`.
-4. Add the `/git.git/*` handler: derive the target repo path from the authenticated `accountId`, `mkdir -p` + `git init --bare` lazily, spawn `git http-backend` with the CGI env described above, stream stdin/stdout. Implement the Basic-auth-to-bearer adapter so `git clone` works with credential helpers.
-5. Port [workers/near-rpc-proxy.js](./workers/near-rpc-proxy.js) into an in-process `/rpc` handler reusing the shared auth middleware. Retire the Worker deployment (leave the source in-tree for now; delete in a follow-up once the container is live).
-6. Update `Dockerfile`: `node:20-slim` base, `apt-get install -y git`, `VOLUME /data`.
-7. Integration test: obtain a token, then hit (a) `/api/prices/history`, (b) `/api/accounting/accounts`, (c) `/rpc` with a view-call, (d) `git clone https://…/git.git` followed by a commit + push — all with the same token; verify all return 401 without it, and that a second account cannot reach the first account's repo.
+1. ✅ Extract auth into a middleware module; add unit tests. *(slice a)*
+2. ✅ Refactor [server/index.js](./server/index.js) into an explicit router with the middleware applied uniformly. *(slice a)*
+3. ⬜ Consume `near-accounting-export` as an npm dependency — publish it to npm (or install via git URL, e.g. `"near-accounting-export": "github:PeterSalomonsen/near-accounting-export#<sha>"`, while unpublished). Upstream changes needed there: remove its own auth/CORS, expose a `createRouter()` (or `mount(app, opts)`) entry point from `package.json` that accepts a `getAccountId(req)` hook, and start its background sync worker via an exported `startWorker({ dataDir })`. *(slice c, blocked on petersalomonsen/near-accounting-export#42)*
+4. ⬜ Add the `/git.git/*` handler: derive the target repo path from the authenticated `accountId`, `mkdir -p` + `git init --bare` lazily, spawn `git http-backend` with the CGI env described above, stream stdin/stdout. Implement the Basic-auth-to-bearer adapter so `git clone` works with credential helpers. *(slice b)*
+5. ✅ Port the Cloudflare Worker RPC logic into an in-process `/rpc` handler reusing the shared auth middleware. Retired the Worker deployment in the same PR. *(slice a)*
+6. ✅ Update `Dockerfile`: `node:20-slim` base, `apt-get install -y git ca-certificates`, `VOLUME /data`, production-only install. *(slice a)*
+7. ⬜ Integration test: obtain a token, then hit (a) `/api/prices/history`, (b) `/api/accounting/accounts`, (c) `/rpc` with a view-call, (d) `git clone https://…/git.git` followed by a commit + push — all with the same token; verify all return 401 without it, and that a second account cannot reach the first account's repo. *(parts (a) and (c) green via slice a unit tests; (b) and (d) pending slices b/c)*
+
+A separate slice (d) tracked in #5 reworks the `/api/prices/*` providers (the sponsored CoinGecko Pro key was deactivated, so prices are currently broken on `main` until that lands).
 
 ## Resolved decisions
 
