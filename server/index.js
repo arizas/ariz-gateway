@@ -1,5 +1,10 @@
 import { createServer } from 'node:http';
-import { fetchPriceHistory, fetchCurrencyList } from './api/prices.js';
+import {
+    fetchCurrencyList,
+    fetchCurrent,
+    fetchPriceHistory,
+    startEodScheduler
+} from './api/prices/index.js';
 import { createAuthenticate } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
 
@@ -13,6 +18,10 @@ const handleRpc = createRpcHandler({ nodeUrl });
 
 function requiresAuth(pathname) {
     return pathname.startsWith('/api/') || pathname === '/rpc';
+}
+
+function splitList(value) {
+    return (value ?? '').split(',').map(s => s.trim()).filter(Boolean);
 }
 
 async function dispatch(req, res, pathname, querystring, accountId) {
@@ -29,6 +38,14 @@ async function dispatch(req, res, pathname, querystring, accountId) {
             null,
             1
         ));
+        return;
+    }
+    if (pathname === '/api/prices/current') {
+        const search = new URLSearchParams(querystring);
+        const tokens = splitList(search.get('tokens'));
+        const vs = splitList(search.get('vs'));
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(await fetchCurrent(tokens, vs), null, 1));
         return;
     }
     if (pathname === '/rpc') {
@@ -65,7 +82,8 @@ const server = createServer(async (req, res) => {
 
     try {
         await dispatch(req, res, pathname, querystring, accountId);
-    } catch {
+    } catch (err) {
+        console.error(err);
         if (!res.headersSent) {
             res.statusCode = 500;
             res.end('Internal error');
@@ -74,6 +92,8 @@ const server = createServer(async (req, res) => {
         }
     }
 });
+
+startEodScheduler();
 
 await new Promise(resolve => server.listen(SERVER_PORT, () => resolve()));
 console.log('server listening at port', SERVER_PORT);
