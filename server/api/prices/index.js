@@ -216,6 +216,7 @@ let eodIntervalId = null;
 
 export function startEodScheduler() {
     if (eodIntervalId) return;
+    runEodUpdate().catch(err => console.error('EOD update error:', err));
     eodIntervalId = setInterval(() => {
         runEodUpdate().catch(err => console.error('EOD update error:', err));
     }, EOD_INTERVAL_MS);

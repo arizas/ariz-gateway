@@ -67,7 +67,7 @@ Since `PATH_INFO` is constructed server-side from the verified `accountId`, ther
 Single-stage (or simple two-stage) Dockerfile on `node:20-slim`:
 
 1. **build** (optional stage): install deps, TypeScript-compile anything that needs it.
-2. **runtime**: `node:20-slim` with `apt-get install -y git ca-certificates`, runtime deps installed via `yarn install --production --frozen-lockfile` so devDeps (notably `near-sandbox`, which has no Linux arm64 binary) stay out of the image. Copy sources + `node_modules`. Declare `VOLUME /data` for `ARIZ_DATA_DIR` (holds both accounting-export's data and the bare git repos under `/data/git/`). Expose only the gateway port.
+2. **runtime**: `node:20-slim` with `apt-get install -y git ca-certificates`, runtime deps installed via `yarn install --production --frozen-lockfile` so devDeps (notably `near-sandbox`, which has no Linux arm64 binary) stay out of the image. Copy sources + `node_modules`. Declare `VOLUME /data` for `ARIZ_DATA_DIR` (holds both accounting-export's data and the bare git repos under `/data/git/`, plus the prices cache under `/data/prices/` and `/data/forex/`). Mount a persistent volume to `/data` in production — without it the container still works (prices are re-fetched on each restart) but the historical cache is lost. Expose only the gateway port.
 
 No Rust toolchain, no CGI runner, no s6/tini needed — Node is PID 1.
 
