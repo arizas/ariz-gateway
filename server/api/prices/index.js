@@ -111,9 +111,18 @@ const CURRENCYLIST_VS = [
 const SPOT_TTL_MS = 60_000;
 const spotCache = new Map();
 
+const SYMBOL_BY_COIN_ID = Object.fromEntries(
+    Object.entries(COIN_IDS).map(([symbol, cgId]) => [cgId, symbol])
+);
+
 function coinId(token) {
     const key = token.toLowerCase();
     return COIN_IDS[key] ?? key;
+}
+
+function toSymbol(token) {
+    const key = token.toLowerCase();
+    return SYMBOL_BY_COIN_ID[key] ?? key;
 }
 
 async function spotCached(key, fetcher) {
@@ -125,21 +134,22 @@ async function spotCached(key, fetcher) {
 }
 
 export async function fetchCurrencyList(token = 'NEAR') {
-    return spotCached(`currencylist:${token.toLowerCase()}`, async () => {
-        const id = coinId(token);
+    const symbol = toSymbol(token);
+    return spotCached(`currencylist:${symbol}`, async () => {
+        const id = coinId(symbol);
         const data = await fetchSimplePrice([id], CURRENCYLIST_VS);
         return data[id] ?? {};
     });
 }
 
 export async function fetchPriceHistory(baseToken = 'NEAR', currency = 'USD', todate) {
-    return getPriceHistory(baseToken, currency, todate);
+    return getPriceHistory(toSymbol(baseToken), currency, todate);
 }
 
 export async function fetchCurrent(tokens, vsCurrencies) {
     if (!tokens || tokens.length === 0) return {};
     const vs = vsCurrencies && vsCurrencies.length > 0 ? vsCurrencies : ['usd'];
-    const ids = tokens.map(coinId);
+    const ids = tokens.map(t => coinId(toSymbol(t)));
     const sortedIds = [...ids].sort();
     const sortedVs = [...vs.map(v => v.toLowerCase())].sort();
     const cacheKey = `current:${sortedIds.join(',')}:${sortedVs.join(',')}`;
