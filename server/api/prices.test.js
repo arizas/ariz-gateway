@@ -158,6 +158,52 @@ describe('prices', () => {
         equal(fetched, false);
     });
 
+    test('basetoken accepts both CoinGecko ids and ticker symbols (regression)', async () => {
+        const calls = [];
+        globalThis.fetch = async (url) => {
+            const u = url.toString();
+            calls.push(u);
+            if (u.includes('cryptocompare.com')) {
+                return jsonResponse({
+                    Response: 'Success',
+                    Data: { Data: [{ time: dayUnix('2024-06-23'), close: 3500 }] }
+                });
+            }
+            throw new Error(`unexpected fetch ${u}`);
+        };
+
+        const fromCgId = await fetchPriceHistory('ethereum', 'USD');
+        const fromSymbol = await fetchPriceHistory('eth', 'USD');
+
+        deepEqual(fromCgId, { '2024-06-23': 3500 });
+        deepEqual(fromSymbol, fromCgId);
+
+        const cryptoCompareCalls = calls.filter(c => c.includes('cryptocompare.com'));
+        ok(cryptoCompareCalls.length >= 1, 'expected at least one CryptoCompare call');
+        for (const call of cryptoCompareCalls) {
+            const fsym = new URL(call).searchParams.get('fsym');
+            equal(fsym, 'ETH', `CryptoCompare fsym should be ETH, got ${fsym}`);
+        }
+
+        const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'eth.json'), 'utf8'));
+        deepEqual(cached, { '2024-06-23': 3500 });
+        await rejects(() => readFile(join(dataDir, 'prices', 'ethereum.json'), 'utf8'));
+    });
+
+    test('current accepts CoinGecko ids and forwards them to CoinGecko (regression)', async () => {
+        const calls = [];
+        globalThis.fetch = async (url) => {
+            calls.push(url.toString());
+            return jsonResponse({ ethereum: { usd: 3500 } });
+        };
+
+        const out = await fetchCurrent(['ethereum'], ['usd']);
+
+        deepEqual(out, { ethereum: { usd: 3500 } });
+        equal(calls.length, 1);
+        equal(new URL(calls[0]).searchParams.get('ids'), 'ethereum');
+    });
+
     test('cryptocompare error surfaces to the caller', async () => {
         globalThis.fetch = async () => jsonResponse({
             Response: 'Error',
