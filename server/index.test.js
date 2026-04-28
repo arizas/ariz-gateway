@@ -1,12 +1,15 @@
 import { test, before, after, describe } from 'node:test';
 import { fork } from 'child_process';
-import { equal } from 'node:assert/strict';
+import { equal, ok } from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Worker } from 'near-workspaces';
 import nearApi from 'near-api-js';
 import { createToken } from './accesscontrol/tokenverify.test.js';
 
 describe('server', { only: false }, () => {
     let serverProcess;
+    let serverDataDir;
     let worker;
     let root;
     let contract;
@@ -33,15 +36,21 @@ describe('server', { only: false }, () => {
         });
 
         await new Promise((resolve, reject) => {
-            serverProcess.stdout.on('data', (data) => {
-                if (data.toString().includes('server listening at port')) {
+            const onStdout = (data) => {
+                const text = data.toString();
+                const match = text.match(/ARIZ_DATA_DIR=([^\s]+)/);
+                if (match) {
+                    serverDataDir = match[1];
+                }
+                if (text.includes('server listening at port')) {
                     resolve();
                 }
-            });
+            };
+
+            serverProcess.stdout.on('data', onStdout);
 
             serverProcess.stderr.on('data', (data) => {
-                console.error('stderr:', data.toString());
-                reject(data.toString());
+                process.stderr.write(`[server stderr] ${data}`);
             });
 
             serverProcess.on('error', (error) => {
@@ -115,6 +124,43 @@ describe('server', { only: false }, () => {
         equal(prices["2021-09-26"], 7.68236523127079);
         equal(prices["2024-06-14"], 5.910628180317743);
         equal(prices["2024-06-23"], 5.172866304874715);
+    });
+
+    test('unauthenticated /api/accounting/status is rejected', async () => {
+        const response = await fetch(`${baseUrl()}/api/accounting/status`);
+        equal(response.status, 401);
+    });
+
+    test('authenticated /api/accounting/status returns 200 and lazy-enrolls account', async () => {
+        const { token } = await registerToken();
+
+        const response = await fetch(`${baseUrl()}/api/accounting/status`, {
+            headers: { 'authorization': `Bearer ${token}` }
+        });
+
+        equal(response.status, 200);
+        const body = await response.json();
+        equal(body.accountId, contract.accountId);
+        equal(body.hasData, false);
+
+        const accountsRaw = await readFile(join(serverDataDir, 'accounts.json'), 'utf8');
+        const accountsDb = JSON.parse(accountsRaw);
+        ok(accountsDb.accounts[contract.accountId], `expected ${contract.accountId} in accounts.json`);
+    });
+
+    test('/api/accounting respects accountId from token, ignoring x-account-id header', async () => {
+        const { token } = await registerToken();
+
+        const response = await fetch(`${baseUrl()}/api/accounting/status`, {
+            headers: {
+                'authorization': `Bearer ${token}`,
+                'x-account-id': 'attacker.near'
+            }
+        });
+
+        equal(response.status, 200);
+        const body = await response.json();
+        equal(body.accountId, contract.accountId);
     });
 
     test('/rpc forwards authenticated request to upstream node', async () => {

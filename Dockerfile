@@ -6,6 +6,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json yarn.lock ./
+COPY scripts scripts
 RUN yarn install --production --frozen-lockfile
 
 COPY server server

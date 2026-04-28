@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 const dataDir = await mkdtemp(join(tmpdir(), 'ariz-gateway-mock-'));
 process.env.ARIZ_DATA_DIR = dataDir;
+process.env.ARIZ_GATEWAY_DISABLE_ACCOUNTING_WORKER = 'true';
+console.log(`ARIZ_DATA_DIR=${dataDir}`);
 
 await mkdir(join(dataDir, 'prices'), { recursive: true });
 
