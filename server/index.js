@@ -44,19 +44,17 @@ app.get('/api/prices/currencylist', auth, async (req, res) => {
 });
 
 app.get('/api/prices/history', auth, async (req, res) => {
-    const search = new URLSearchParams(req.url.split('?')[1] ?? '');
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify(
-        await fetchPriceHistory(search.get('basetoken'), search.get('currency'), search.get('todate')),
+        await fetchPriceHistory(req.query.basetoken, req.query.currency, req.query.todate),
         null,
         1
     ));
 });
 
 app.get('/api/prices/current', auth, async (req, res) => {
-    const search = new URLSearchParams(req.url.split('?')[1] ?? '');
-    const tokens = splitList(search.get('tokens'));
-    const vs = splitList(search.get('vs'));
+    const tokens = splitList(req.query.tokens);
+    const vs = splitList(req.query.vs);
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify(await fetchCurrent(tokens, vs), null, 1));
 });

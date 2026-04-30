@@ -4,12 +4,11 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node --test server/accesscontrol/*.test.js server/api/*.test.js",
-    "test:integration": "node --test server/index.test.js",
-    "postinstall": "node scripts/build-near-accounting-export.js"
+    "test:integration": "node --test server/index.test.js"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "near-accounting-export": "github:PeterSalomonsen/near-accounting-export#a83e278",
+    "near-accounting-export": "github:PeterSalomonsen/near-accounting-export#5fbe2c2",
     "near-api-js": "^2.1.4"
   },
   "devDependencies": {
