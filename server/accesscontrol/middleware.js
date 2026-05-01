@@ -39,4 +39,17 @@ export async function createAuthenticate({ networkId, contractId, nodeUrl }) {
     };
 }
 
+export async function createAuthMiddleware(opts) {
+    const authenticate = await createAuthenticate(opts);
+    return async function authMiddleware(req, res, next) {
+        try {
+            const { accountId } = await authenticate(req);
+            req.accountId = accountId;
+            next();
+        } catch (err) {
+            res.status(err.statusCode ?? 401).send(err.message);
+        }
+    };
+}
+
 export { AuthError };
