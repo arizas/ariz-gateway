@@ -61,8 +61,18 @@ app.get('/api/prices/current', auth, async (req, res) => {
 
 app.post('/rpc', auth, handleRpc);
 
-app.use('/api/accounting', auth, createAccountingRouter({
-    getAccountId: req => req.accountId,
+// Path-based account selection: any authenticated user can request data
+// for any accountId. Account ownership isn't cryptographically verifiable
+// at the gateway, so read access is open to all signed-in users.
+// Worker enrollment (which accounts the background sync actually processes)
+// is the place to apply restrictions like a payment gate; that's a follow-up.
+app.use('/api/accounting/:accountId', auth, (req, _res, next) => {
+    // Express resets req.params when entering a mounted router, so stash
+    // the path-derived accountId on req for the upstream getAccountId hook.
+    req.targetAccountId = req.params.accountId;
+    next();
+}, createAccountingRouter({
+    getAccountId: req => req.targetAccountId,
     dataDir
 }));
 
