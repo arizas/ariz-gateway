@@ -126,15 +126,15 @@ describe('server', { only: false }, () => {
         equal(prices["2024-06-23"], 5.172866304874715);
     });
 
-    test('unauthenticated /api/accounting/status is rejected', async () => {
-        const response = await fetch(`${baseUrl()}/api/accounting/status`);
+    test('unauthenticated /api/accounting/<accountId>/status is rejected', async () => {
+        const response = await fetch(`${baseUrl()}/api/accounting/${contract.accountId}/status`);
         equal(response.status, 401);
     });
 
-    test('authenticated /api/accounting/status returns 200 and lazy-enrolls account', async () => {
+    test('authenticated /api/accounting/<accountId>/status returns 200 and lazy-enrolls account', async () => {
         const { token } = await registerToken();
 
-        const response = await fetch(`${baseUrl()}/api/accounting/status`, {
+        const response = await fetch(`${baseUrl()}/api/accounting/${contract.accountId}/status`, {
             headers: { 'authorization': `Bearer ${token}` }
         });
 
@@ -148,19 +148,25 @@ describe('server', { only: false }, () => {
         ok(accountsDb.accounts[contract.accountId], `expected ${contract.accountId} in accounts.json`);
     });
 
-    test('/api/accounting respects accountId from token, ignoring x-account-id header', async () => {
+    test('authenticated user can fetch accounting data for any accountId in the path', async () => {
+        // Open read access by design: the gateway can't cryptographically verify
+        // account ownership, so any signed-in user can request data for any
+        // accountId. Restriction belongs in worker enrollment, not at the read API.
         const { token } = await registerToken();
+        const otherAccountId = 'someoneelse.near';
 
-        const response = await fetch(`${baseUrl()}/api/accounting/status`, {
-            headers: {
-                'authorization': `Bearer ${token}`,
-                'x-account-id': 'attacker.near'
-            }
+        const response = await fetch(`${baseUrl()}/api/accounting/${otherAccountId}/status`, {
+            headers: { 'authorization': `Bearer ${token}` }
         });
 
         equal(response.status, 200);
         const body = await response.json();
-        equal(body.accountId, contract.accountId);
+        equal(body.accountId, otherAccountId);
+        equal(body.hasData, false);
+
+        const accountsRaw = await readFile(join(serverDataDir, 'accounts.json'), 'utf8');
+        const accountsDb = JSON.parse(accountsRaw);
+        ok(accountsDb.accounts[otherAccountId], `expected ${otherAccountId} in accounts.json`);
     });
 
     test('/rpc forwards authenticated request to upstream node', async () => {
