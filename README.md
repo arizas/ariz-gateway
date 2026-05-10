@@ -1,31 +1,81 @@
 Ariz gateway
 ============
 
-Gateway to APIs used by Ariz Portfolio.
+Unified Node backend for [Ariz Portfolio](https://github.com/arizas/Ariz-Portfolio). One Express app, one container, one auth surface.
 
-- Coingecko
-- Pikespeak
-- NEAR RPC (via Cloudflare Workers)
+## What it serves
 
-# Local development setup
+| Path | Purpose | Source |
+|---|---|---|
+| `/api/prices/currencylist` | Spot prices for one token across many fiats | CoinGecko free `/simple/price` |
+| `/api/prices/history` | Multi-year daily price history (token × fiat × day) | CryptoCompare `histoday` (crypto) + Frankfurter (forex) |
+| `/api/prices/current` | Spot price batched across tokens, 60s in-memory TTL | CoinGecko free `/simple/price` |
+| `/rpc` | Authenticated NEAR JSON-RPC proxy | Forwarded to `ARIZ_GATEWAY_NODE_URL` |
+| `/api/accounting/:accountId/*` | Per-account transaction history (status, JSON, CSV, gap analysis) | [near-accounting-export](https://github.com/PeterSalomonsen/near-accounting-export) router + worker, mounted in-process |
 
-Before starting you need to set up the environment variables in a file named `.env`, which you should create as it is [ignored by git](./.gitignore).
-This file points to server hosting port and contract id / network, but also contains your API keys, which should be kept secret.
+All routes require a NEAR-signed bearer token, verified per request via the `arizportfolio.near` contract's `get_account_id_for_token` view. See [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js).
+
+Architecture overview and slice history: [UNIFIED_BACKEND_PLAN.md](./UNIFIED_BACKEND_PLAN.md).
+
+## Local development
 
 ```bash
+npm install
+cp .env.example .env  # fill in values, see below
+env $(grep -v '^#' .env) npm start
+```
+
+Required env vars (`.env`, gitignored):
+
+```bash
+# Gateway (auth + RPC proxy target)
 ARIZ_GATEWAY_PORT=15000
-ARIZ_GATEWAY_CONTRACT_ID=arizportfolio.testnet
-ARIZ_GATEWAY_NEAR_NETWORK_ID=testnet
+ARIZ_GATEWAY_CONTRACT_ID=arizportfolio.near        # or .testnet
+ARIZ_GATEWAY_NEAR_NETWORK_ID=mainnet               # or testnet
+ARIZ_GATEWAY_NODE_URL=https://rpc.mainnet.fastnear.com
+
+# Persistent data (prices/forex cache + accounting per-account JSONs)
+ARIZ_DATA_DIR=./data
+
+# near-accounting-export worker — REQUIRED for the accounting subsystem
+# to make sustained progress without hitting public-RPC rate limits
+FASTNEAR_API_KEY=...
+NEAR_RPC_ENDPOINT=https://archival-rpc.mainnet.fastnear.com
+
+# Optional, gives the worker richer transaction discovery
+NEARBLOCKS_API_KEY=...
+PIKESPEAK_API_KEY=...
 ```
 
-You can then start the server like this
+Two RPC env vars on purpose:
+- `ARIZ_GATEWAY_NODE_URL` — the gateway's own auth check + the `/rpc` proxy target. Non-archival is fine.
+- `NEAR_RPC_ENDPOINT` — the **accounting worker's** RPC. Must be archival; the worker reads historical block state to back-fill account history.
+
+## Tests
 
 ```bash
-env $(grep -v '^#' .env) yarn start
+npm test                  # unit (auth + prices)
+npm run test:integration  # full server, requires near-workspaces sandbox
 ```
 
-# NEAR RPC Proxy (Cloudflare Workers)
+## Deployment
 
-For high-volume NEAR RPC requests, we use a Cloudflare Worker proxy to securely handle API keys. See the [workers/README.md](./workers/README.md) for setup and deployment instructions.
+Deployed to Fly.io as `arizgateway` under the `ariz-as` org → `https://arizgateway.fly.dev`.
 
-This allows the near-account-report application to make RPC calls without exposing API keys on the client side.
+CI deploys on every push to `main` via [.github/workflows/fly-deploy.yml](./.github/workflows/fly-deploy.yml). Configuration lives in [fly.toml](./fly.toml). The persistent volume `ariz_data` is mounted at `/data` (declared in `fly.toml`); destroying the app would destroy the volume, so suspend (`flyctl machine stop`) before any teardown.
+
+Production secrets are managed with `flyctl secrets set` — never committed. The full set is the same as the local `.env` above (`FASTNEAR_API_KEY`, `NEARBLOCKS_API_KEY`, `PIKESPEAK_API_KEY`, the four `ARIZ_GATEWAY_*` vars, and `NEAR_RPC_ENDPOINT` for the worker). The `ARIZ_DATA_DIR` is set to `/data` via `fly.toml`'s `[env]` block.
+
+## Operational notes
+
+- **Worker stalls = missing FASTNEAR_API_KEY.** If accounting JSONs stop updating, check the gateway logs (`flyctl logs --app arizgateway`) for `Operation cancelled - rate limit detected`. The worker calls FastNEAR for nearly every block it walks; without an API key it gets throttled within seconds.
+- **Worker uses archival.** If you see `RPC error in viewAccount for ... at block N: Server error`, `NEAR_RPC_ENDPOINT` is pointing at a non-archival node. Set it to `https://archival-rpc.mainnet.fastnear.com`.
+- **Auth model.** Any registered token (registered via `register_token` on the ariz contract, costs 0.2 NEAR) can read **any** account's data via `/api/accounting/:accountId/...`. This is intentional — account ownership isn't cryptographically verifiable at the gateway, so reads are open to authenticated users. Restriction will move to the worker (which accounts get synced) in a follow-up.
+- **Lazy enrollment.** First authenticated request for a previously-unseen `accountId` adds it to `accounts.json`; the worker picks it up on its next cycle and starts back-filling history.
+
+## Repository layout
+
+- [server/](./server) — Express app, auth middleware, in-process handlers (prices, RPC, accounting mount)
+- [contract/](./contract) — `arizportfolio.near` smart contract: web4 frontend host + access-token registry
+- [fly.toml](./fly.toml) — Fly.io app config + volume declaration
+- [UNIFIED_BACKEND_PLAN.md](./UNIFIED_BACKEND_PLAN.md) — design history and slice tracking
