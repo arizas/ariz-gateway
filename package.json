@@ -4,7 +4,8 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node --test server/accesscontrol/*.test.js server/api/*.test.js",
-    "test:integration": "node --test server/index.test.js"
+    "test:integration": "node --test server/index.test.js",
+    "test:arizcredits-upgrade": "node --test arizcredits/sandbox/upgrade.test.js"
   },
   "dependencies": {
     "express": "^4.21.2",
