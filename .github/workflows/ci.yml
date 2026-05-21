@@ -71,10 +71,17 @@ jobs:
           toolchain: 1.86.0
           targets: wasm32-unknown-unknown
 
-      - name: Set up Emscripten 3.1.74
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 3.1.74
+      # quickjs-rust-near's build.rs expects the toolchain at
+      # `<repo>/emsdk/upstream/...`, so install emsdk in-tree rather than via
+      # the setup-emsdk action's default location.
+      - name: Install Emscripten 3.1.74 (in-tree)
+        working-directory: quickjs-rust-near
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git emsdk
+          cd emsdk
+          git checkout 3.1.74
+          ./emsdk install 3.1.74
+          ./emsdk activate 3.1.74
 
       - name: Install binaryen 116
         run: |
