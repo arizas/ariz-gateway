@@ -55,14 +55,13 @@ jobs:
           path: ariz-gateway
 
       # The upgrade test needs the *new* fungible_token.wasm built from
-      # quickjs-rust-near at a ref that has the operator-deduction +
-      # block_timestamp_ms + clear_data fixes. While that PR is open,
-      # check out the branch; switch to a tag once it merges.
-      - name: Checkout quickjs-rust-near (operator-deduction branch)
+      # quickjs-rust-near with the operator-deduction + block_timestamp_ms
+      # + clear_data fixes (landed in #51 / commit 7449ebf).
+      - name: Checkout quickjs-rust-near
         uses: actions/checkout@v4
         with:
           repository: petersalomonsen/quickjs-rust-near
-          ref: claude/add-generic-operator-deduction
+          ref: main
           path: quickjs-rust-near
 
       - name: Set up Rust (wasm32 target)
