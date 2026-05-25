@@ -14,12 +14,17 @@ directory owns the JS that the gateway expects to be on-chain.
   `view_ai_conversation`, `refund_unspent`, `buy_tokens_for_near`.
   Contains the `REPLACE_REFUND_SIGNATURE_PUBLIC_KEY` placeholder substituted
   at deploy time.
+- `src/web4_get.js` — vendored AI-proxy web4 frontend currently exported by
+  `arizcredits.near`'s `web4_get`. Captured verbatim (~57 KB base64 HTML
+  blob) from the most recent on-chain `post_javascript` so deployments
+  don't silently drop `arizcredits.near.page`. Regenerated upstream by
+  `yarn aiproxy:web4bundle` in quickjs-rust-near.
 - `src/operator-deduction.js` — gateway-driven usage metering:
   `authorize_deduction`, `revoke_deduction`, `deduct`,
-  `view_authorisation`, `view_spent_since_reset`. See
-  [arizas/Ariz-Portfolio#NN](#) for the design.
-- `src/bundle.js` — assembles the deployable JS by concatenating the two
-  source files and substituting the refund-signature public key.
+  `view_authorisation`, `view_spent_since_reset`.
+- `src/bundle.js` — assembles the deployable JS by concatenating the three
+  source files (`aiconversation` + `web4_get` + `operator-deduction`) and
+  substituting the refund-signature public key.
 - `sandbox/upgrade.test.js` — end-to-end check that the next wasm
   upgrade plus this JS bundle is state-compatible with what's currently
   on-chain. See **Upgrade test** below.

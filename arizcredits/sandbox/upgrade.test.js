@@ -193,6 +193,16 @@ describe("arizcredits upgrade compatibility", () => {
     assert.equal(balance, "7000000");
   });
 
+  // Capture web4_get's response on the baseline so we can assert that the
+  // upgrade doesn't change a single byte of what arizcredits.near.page serves.
+  let web4GetBaselineResponse;
+  test("baseline wasm: web4_get returns the AI-proxy frontend", async () => {
+    const res = await contract.view("web4_get", {});
+    assert.equal(res.contentType, "text/html; charset=UTF-8");
+    assert.ok(res.body && res.body.length > 1000, "web4_get body should be substantial");
+    web4GetBaselineResponse = res;
+  });
+
   // ===== Upgrade =====
 
   test("upgrade: deploy new wasm without state migration; balances and conversation data intact", async () => {
@@ -225,6 +235,14 @@ describe("arizcredits upgrade compatibility", () => {
       convAfter,
       convBefore,
       "conversation data still readable after JS upgrade",
+    );
+
+    // arizcredits.near.page must keep serving the same bytes.
+    const web4After = await contract.view("web4_get", {});
+    assert.deepEqual(
+      web4After,
+      web4GetBaselineResponse,
+      "web4_get response is byte-for-byte identical after the upgrade",
     );
   });
 
