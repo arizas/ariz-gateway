@@ -44,3 +44,73 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  arizcredits_upgrade:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ariz-gateway
+        uses: actions/checkout@v4
+        with:
+          path: ariz-gateway
+
+      # The upgrade test needs the *new* fungible_token.wasm built from
+      # quickjs-rust-near with the operator-deduction + block_timestamp_ms
+      # + clear_data fixes (landed in #51 / commit 7449ebf).
+      - name: Checkout quickjs-rust-near
+        uses: actions/checkout@v4
+        with:
+          repository: petersalomonsen/quickjs-rust-near
+          ref: main
+          path: quickjs-rust-near
+
+      - name: Set up Rust (wasm32 target)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.86.0
+          targets: wasm32-unknown-unknown
+
+      # quickjs-rust-near's build.rs expects the toolchain at
+      # `<repo>/emsdk/upstream/...`, so install emsdk in-tree rather than via
+      # the setup-emsdk action's default location.
+      - name: Install Emscripten 3.1.74 (in-tree)
+        working-directory: quickjs-rust-near
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git emsdk
+          cd emsdk
+          git checkout 3.1.74
+          ./emsdk install 3.1.74
+          ./emsdk activate 3.1.74
+
+      - name: Install binaryen 116
+        run: |
+          curl -fsSL -o /tmp/binaryen.tar.gz \
+            https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz
+          tar -xzf /tmp/binaryen.tar.gz -C /tmp
+          echo "/tmp/binaryen-version_116/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch QuickJS source
+        working-directory: quickjs-rust-near
+        run: |
+          curl -fsSL -o quickjs.tar.xz https://bellard.org/quickjs/quickjs-2024-01-13.tar.xz
+          tar -xf quickjs.tar.xz
+          rm quickjs.tar.xz
+
+      - name: Build fungible_token.wasm
+        working-directory: quickjs-rust-near/examples/fungibletoken
+        run: ./build.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install ariz-gateway deps
+        working-directory: ariz-gateway
+        run: npm ci
+
+      - name: Run arizcredits upgrade test
+        working-directory: ariz-gateway
+        env:
+          ARIZCREDITS_NEW_WASM: ${{ github.workspace }}/quickjs-rust-near/examples/fungibletoken/out/fungible_token.wasm
+        run: npm run test:arizcredits-upgrade
