@@ -10,6 +10,8 @@ import { createRpcHandler } from './rpc.js';
 import { createRouter as createAccountingRouter, startWorker as startAccountingWorker } from 'near-accounting-export';
 import { createDeductClient } from './arizcredits/deduct.js';
 import { createBillingPass } from './arizcredits/billing.js';
+import { createAuthorizationChecker } from './arizcredits/authorization.js';
+import { pruneAccounts } from './arizcredits/enrollment.js';
 
 const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT ?? 15000;
 const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID ?? 'arizportfolio.testnet';
@@ -28,6 +30,15 @@ if (!process.env.NEAR_RPC_ENDPOINT) {
 
 const auth = await createAuthMiddleware({ networkId, contractId, nodeUrl });
 const handleRpc = createRpcHandler({ nodeUrl });
+
+// Billing is enabled only when an operator key + a positive per-request rate are
+// set. When enabled, we also gate enrollment + syncing on each account having an
+// active authorisation AND a positive ARIZ balance, so we never sync (incur
+// FastNear cost for) accounts that aren't paying.
+const billingEnabled = !!(process.env.ARIZCREDITS_OPERATOR_KEY && arizPerFastNearRequest && BigInt(arizPerFastNearRequest) > 0n);
+const accountGate = billingEnabled
+    ? await createAuthorizationChecker({ networkId, nodeUrl, contractId: arizCreditsContractId })
+    : null;
 
 function splitList(value) {
     return (value ?? '').split(',').map(s => s.trim()).filter(Boolean);
@@ -68,15 +79,25 @@ app.get('/api/prices/current', auth, async (req, res) => {
 
 app.post('/rpc', auth, handleRpc);
 
-// Path-based account selection: any authenticated user can request data
-// for any accountId. Account ownership isn't cryptographically verifiable
-// at the gateway, so read access is open to all signed-in users.
-// Worker enrollment (which accounts the background sync actually processes)
-// is the place to apply restrictions like a payment gate; that's a follow-up.
-app.use('/api/accounting/:accountId', auth, (req, _res, next) => {
+// Path-based account selection. When billing is on, the gateway gates accounting
+// access (and therefore enrollment/syncing) on the account having an active
+// authorisation + ARIZ balance — an unauthorised account gets 402 and never
+// reaches the lazy-enrollment in the (Ariz-agnostic) accounting router.
+app.use('/api/accounting/:accountId', auth, async (req, res, next) => {
     // Express resets req.params when entering a mounted router, so stash
     // the path-derived accountId on req for the upstream getAccountId hook.
     req.targetAccountId = req.params.accountId;
+    if (accountGate) {
+        let allowed = false;
+        try { allowed = await accountGate(req.params.accountId); } catch { allowed = false; } // fail closed
+        if (!allowed) {
+            return res.status(402).json({
+                error: 'authorization_required',
+                accountId: req.params.accountId,
+                message: 'Authorize the Ariz gateway (authorize_deduction on arizcredits.near) and hold ARIZ to enable syncing for this account.',
+            });
+        }
+    }
     next();
 }, createAccountingRouter({
     getAccountId: req => req.targetAccountId,
@@ -104,11 +125,30 @@ if (process.env.ARIZ_GATEWAY_DISABLE_ACCOUNTING_WORKER !== 'true') {
     accountingWorker = await startAccountingWorker({ dataDir });
 }
 
+// Enrollment reconciliation: periodically prune accounts that no longer qualify
+// (authorisation revoked / out of ARIZ) from the worker's account list, so the
+// background sync stops syncing them. Pairs with the request-time 402 gate above
+// (which keeps new unauthorised accounts out). Gateway-owned policy; the library
+// just syncs whatever remains listed.
+let reconcileTimer = null;
+if (billingEnabled && accountGate) {
+    const reconcile = async () => {
+        try {
+            const pruned = await pruneAccounts(dataDir, accountGate);
+            if (pruned.length) console.log(`[enrollment] pruned ${pruned.length} unauthorised account(s): ${pruned.join(', ')}`);
+        } catch (e) {
+            console.error('[enrollment] reconciliation failed:', e);
+        }
+    };
+    await reconcile();
+    reconcileTimer = setInterval(reconcile, 60 * 60 * 1000); // hourly
+}
+
 // Daily ARIZ usage-billing pass. The worker records per-account FastNear request
 // metrics; this pass converts the unbilled delta to ARIZ and deducts it in one
 // batched call once per UTC day. All billing state lives in the gateway.
 let billingTimer = null;
-if (process.env.ARIZCREDITS_OPERATOR_KEY && arizPerFastNearRequest && BigInt(arizPerFastNearRequest) > 0n) {
+if (billingEnabled) {
     const deductClient = await createDeductClient({
         networkId,
         nodeUrl,
@@ -150,6 +190,9 @@ async function shutdown() {
     server.close();
     if (billingTimer) {
         clearInterval(billingTimer);
+    }
+    if (reconcileTimer) {
+        clearInterval(reconcileTimer);
     }
     if (accountingWorker) {
         await accountingWorker.stop();
