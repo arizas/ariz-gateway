@@ -1,5 +1,5 @@
 import nearApi from 'near-api-js';
-import { parseToken, isTokenValidForAccount, isValidSignature } from './tokenverify.js';
+import { verifyNep413, makeAccessKeyListReader } from './nep413.js';
 
 class AuthError extends Error {
     constructor(message) {
@@ -8,34 +8,35 @@ class AuthError extends Error {
     }
 }
 
-export async function createAuthenticate({ networkId, contractId, nodeUrl }) {
+/**
+ * Build the request authenticator. Auth is NEP-413: the client sends a
+ * `Bearer <base64(JSON)>` signed message; we verify the signature, the
+ * recipient, a stateless timestamp window, and that the signing key is a Full
+ * Access key on the claimed account (via cached `view_access_key_list`).
+ *
+ * @param {object} opts
+ * @param {string} opts.networkId
+ * @param {string} opts.contractId
+ * @param {string} opts.nodeUrl
+ * @param {string} [opts.recipient] expected NEP-413 recipient (defaults to contractId)
+ */
+export async function createAuthenticate({ networkId, contractId, nodeUrl, recipient }) {
     const near = await nearApi.connect({ networkId, contractId, nodeUrl });
-    const account = await near.account();
-    const contract = new nearApi.Contract(account, contractId, {
-        viewMethods: ['get_account_id_for_token']
-    });
+    const provider = near.connection.provider;
+    const viewAccessKeyList = makeAccessKeyListReader(provider);
+    const expectedRecipient = recipient ?? contractId;
 
     return async function authenticate(req) {
-        let parsed;
-        try {
-            parsed = await parseToken(req.headers.authorization);
-        } catch {
+        const header = req.headers.authorization;
+        if (!header || !header.startsWith('Bearer ')) {
             throw new AuthError('failed to parse token');
         }
-        const { token_hash_bytes, token_payload, token_signature_bytes } = parsed;
-
-        let accountId;
+        const token = header.slice('Bearer '.length).trim();
         try {
-            accountId = await contract.get_account_id_for_token({ token_hash: Array.from(token_hash_bytes) });
-        } catch {
-            throw new AuthError('Unauthorized');
+            return await verifyNep413(token, { recipient: expectedRecipient, viewAccessKeyList });
+        } catch (err) {
+            throw new AuthError(err.message || 'Unauthorized');
         }
-
-        if (!isTokenValidForAccount(accountId, token_payload) ||
-            !isValidSignature(token_payload.publicKey, token_signature_bytes, token_hash_bytes)) {
-            throw new AuthError('Unauthorized');
-        }
-        return { accountId };
     };
 }
 

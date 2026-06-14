@@ -3,9 +3,28 @@ import { fork } from 'child_process';
 import { equal, ok } from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Worker } from 'near-workspaces';
-import nearApi from 'near-api-js';
-import { createToken } from './accesscontrol/tokenverify.test.js';
+import { Worker, KeyPair } from 'near-workspaces';
+import { randomBytes, createHash } from 'node:crypto';
+import { serializeNep413Payload } from './accesscontrol/nep413.js';
+
+// Build a NEP-413 bearer token (base64(JSON)) signed by `keyPair`, matching
+// what the frontend produces via @hot-labs/near-connect signMessage.
+function createNep413Token(keyPair, accountId, recipient, { issuedAt = Date.now() } = {}) {
+    const message = JSON.stringify({ issuedAt });
+    const nonce = new Uint8Array(randomBytes(32));
+    const serialized = serializeNep413Payload({ message, nonce, recipient, callbackUrl: null });
+    const digest = new Uint8Array(createHash('sha256').update(serialized).digest());
+    const { signature } = keyPair.sign(digest);
+    const payload = {
+        accountId,
+        publicKey: keyPair.getPublicKey().toString(),
+        signature: Buffer.from(signature).toString('base64'),
+        message,
+        nonce: Buffer.from(nonce).toString('base64'),
+        recipient,
+    };
+    return Buffer.from(JSON.stringify(payload)).toString('base64');
+}
 
 describe('server', { only: false }, () => {
     let serverProcess;
@@ -72,17 +91,10 @@ describe('server', { only: false }, () => {
 
     const baseUrl = () => `http://localhost:${serverEnvironment.ARIZ_GATEWAY_PORT}`;
 
-    async function registerToken() {
-        const created = createToken(contactAccountKeyPair, contract.accountId);
-        await contract.call(contract.accountId, 'register_token', {
-            token_hash: Array.from(created.tokenHash),
-            signature: Array.from(created.signatureBytes),
-            public_key: Array.from(created.publicKeyBytes)
-        }, {
-            attachedDeposit: nearApi.utils.format.parseNearAmount('0.2')
-        });
-        return created;
-    }
+    // The contract account is the recipient (middleware defaults recipient to
+    // the contract id) and its full-access key signs the NEP-413 message.
+    const authToken = () =>
+        createNep413Token(contactAccountKeyPair, contract.accountId, contract.accountId);
 
     test('connect and get default response', async () => {
         const response = await fetch(baseUrl());
@@ -101,18 +113,20 @@ describe('server', { only: false }, () => {
         equal(await response.text(), 'failed to parse token');
     });
 
-    test('/api with token whose account is not registered is Unauthorized', async () => {
-        const { token } = createToken(contactAccountKeyPair, 'unknown.near');
+    test('/api with a token signed by a key not on the account is rejected', async () => {
+        // Random key that is not an access key on the contract account.
+        const stranger = KeyPair.fromRandom('ed25519');
+        const token = createNep413Token(stranger, contract.accountId, contract.accountId);
         const response = await fetch(`${baseUrl()}/api/prices/currencylist`, {
             headers: { 'authorization': `Bearer ${token}` }
         });
 
         equal(response.status, 401);
-        equal(await response.text(), 'Unauthorized');
+        equal(await response.text(), 'public key not on account');
     });
 
-    test('get price history with registered token', async () => {
-        const { token } = await registerToken();
+    test('get price history with NEP-413 token', async () => {
+        const token = authToken();
 
         const response = await fetch(
             `${baseUrl()}/api/prices/history?basetoken=near&currency=usd&todate=2024-06-23`,
@@ -132,7 +146,7 @@ describe('server', { only: false }, () => {
     });
 
     test('authenticated /api/accounting/<accountId>/status returns 200 and lazy-enrolls account', async () => {
-        const { token } = await registerToken();
+        const token = authToken();
 
         const response = await fetch(`${baseUrl()}/api/accounting/${contract.accountId}/status`, {
             headers: { 'authorization': `Bearer ${token}` }
@@ -152,7 +166,7 @@ describe('server', { only: false }, () => {
         // Open read access by design: the gateway can't cryptographically verify
         // account ownership, so any signed-in user can request data for any
         // accountId. Restriction belongs in worker enrollment, not at the read API.
-        const { token } = await registerToken();
+        const token = authToken();
         const otherAccountId = 'someoneelse.near';
 
         const response = await fetch(`${baseUrl()}/api/accounting/${otherAccountId}/status`, {
@@ -170,7 +184,7 @@ describe('server', { only: false }, () => {
     });
 
     test('/rpc forwards authenticated request to upstream node', async () => {
-        const { token } = await registerToken();
+        const token = authToken();
 
         const response = await fetch(`${baseUrl()}/rpc`, {
             method: 'POST',
