@@ -260,83 +260,129 @@ describe("arizcredits upgrade compatibility", () => {
     assert.equal(conv.receiver_id, alice.accountId);
   });
 
-  test("after upgrade: operator deduction lifecycle (authorize → deduct → view → revoke)", async () => {
+  // The operator is the contract account itself: users authorise
+  // `operator_account = contract.accountId`, and `deduct` is signed AS the
+  // contract account (predecessor === current_account_id).
+  test("after upgrade: operator deduction lifecycle (authorize → batch deduct → view → revoke)", async () => {
     const aliceBefore = BigInt(
       await contract.view("ft_balance_of", { account_id: alice.accountId }),
     );
 
-    // alice authorises the operator to deduct up to 1_000 per day.
+    // alice authorises the contract (operator) to deduct up to 1_000 per day.
     await alice.call(contract.accountId, "call_js_func", {
       function_name: "authorize_deduction",
-      operator_account: operator.accountId,
+      operator_account: contract.accountId,
       max_amount_per_day: "1000",
     });
 
     const auth = await contract.view("view_js_func", {
       function_name: "view_authorisation",
       user: alice.accountId,
-      operator_account: operator.accountId,
+      operator_account: contract.accountId,
     });
     assert.notEqual(auth, null, "view_authorisation should not be null after authorize");
     assert.equal(auth.max_per_day, "1000");
-    assert.equal(auth.spent_since_reset, "0");
+    assert.equal(auth.spent_today, "0");
 
-    // operator deducts 250.
-    await operator.call(contract.accountId, "call_js_func", {
+    // The contract deducts 250 from alice in a (single-entry) batch.
+    const results = await contract.call(contract.accountId, "call_js_func", {
       function_name: "deduct",
-      user: alice.accountId,
-      amount: "250",
-      description: "sync",
+      deductions: [{ user: alice.accountId, amount: "250", description: "sync" }],
     });
+    assert.deepEqual(results, [
+      { user: alice.accountId, status: "deducted", amount: "250" },
+    ]);
 
     const aliceAfter = BigInt(
       await contract.view("ft_balance_of", { account_id: alice.accountId }),
     );
     assert.equal(aliceAfter, aliceBefore - 250n, "alice's balance dropped by the deduction");
 
-    const operatorBalance = await contract.view("ft_balance_of", {
-      account_id: operator.accountId,
-    });
-    assert.equal(operatorBalance, "250", "operator received the deducted amount");
-
     const spent = await contract.view("view_js_func", {
       function_name: "view_spent_since_reset",
       user: alice.accountId,
-      operator_account: operator.accountId,
+      operator_account: contract.accountId,
     });
-    // view_spent_since_reset returns `"<n>"` so after RPC JSON parse this
-    // is a plain string.
     assert.equal(spent, "250");
+
+    // Idempotency: a second deduct the same UTC day is skipped, balance unchanged.
+    const again = await contract.call(contract.accountId, "call_js_func", {
+      function_name: "deduct",
+      deductions: [{ user: alice.accountId, amount: "250" }],
+    });
+    assert.equal(again[0].status, "skipped");
+    assert.match(again[0].reason, /already deducted today/);
+    const aliceUnchanged = BigInt(
+      await contract.view("ft_balance_of", { account_id: alice.accountId }),
+    );
+    assert.equal(aliceUnchanged, aliceAfter, "no double-charge on same-day re-run");
 
     // revoke clears the authorisation.
     await alice.call(contract.accountId, "call_js_func", {
       function_name: "revoke_deduction",
-      operator_account: operator.accountId,
+      operator_account: contract.accountId,
     });
     const authAfter = await contract.view("view_js_func", {
       function_name: "view_authorisation",
       user: alice.accountId,
-      operator_account: operator.accountId,
+      operator_account: contract.accountId,
     });
     assert.equal(authAfter, null, "view_authorisation should be null after revoke");
   });
 
-  test("after upgrade: deduct without authorisation panics", async () => {
-    const stranger = await root.createSubAccount("stranger");
-    await stranger.call(
+  test("after upgrade: only the contract account may deduct (caller guard)", async () => {
+    // `operator` here is just a non-contract account; the guard must reject it.
+    await assert.rejects(
+      operator.call(contract.accountId, "call_js_func", {
+        function_name: "deduct",
+        deductions: [{ user: alice.accountId, amount: "1" }],
+      }),
+      /only the contract account may deduct/,
+    );
+  });
+
+  test("after upgrade: batch deduct skips invalid entries without reverting", async () => {
+    // bob is authorised + funded; stranger is unauthorised. One batch.
+    const bob = await root.createSubAccount("bob");
+    await bob.call(
       contract.accountId,
       "storage_deposit",
-      { account_id: stranger.accountId, registration_only: true },
+      { account_id: bob.accountId, registration_only: true },
       { attachedDeposit: STORAGE_DEPOSIT },
     );
-
-    await assert.rejects(
-      stranger.call(contract.accountId, "call_js_func", {
-        function_name: "deduct",
-        user: alice.accountId,
-        amount: "1",
-      }),
-      /no authorisation/,
+    await bob.call(
+      contract.accountId,
+      "call_js_func",
+      { function_name: "buy_tokens_for_near" },
+      { gas: "300000000000000", attachedDeposit: HALF_NEAR },
     );
+    await bob.call(contract.accountId, "call_js_func", {
+      function_name: "authorize_deduction",
+      operator_account: contract.accountId,
+      max_amount_per_day: "1000",
+    });
+
+    const bobBefore = BigInt(
+      await contract.view("ft_balance_of", { account_id: bob.accountId }),
+    );
+
+    const results = await contract.call(contract.accountId, "call_js_func", {
+      function_name: "deduct",
+      deductions: [
+        { user: bob.accountId, amount: "400" },
+        { user: "stranger.unknown", amount: "400" }, // no authorisation
+      ],
+    });
+
+    assert.equal(results.length, 2);
+    assert.equal(results[0].status, "deducted");
+    assert.equal(results[0].amount, "400");
+    assert.equal(results[1].status, "skipped");
+    assert.match(results[1].reason, /no authorisation/);
+
+    const bobAfter = BigInt(
+      await contract.view("ft_balance_of", { account_id: bob.accountId }),
+    );
+    assert.equal(bobAfter, bobBefore - 400n, "bob deducted; the invalid entry didn't revert it");
   });
 });
