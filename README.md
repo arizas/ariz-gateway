@@ -13,7 +13,7 @@ Unified Node backend for [Ariz Portfolio](https://github.com/arizas/Ariz-Portfol
 | `/rpc` | Authenticated NEAR JSON-RPC proxy | Forwarded to `ARIZ_GATEWAY_NODE_URL` |
 | `/api/accounting/:accountId/*` | Per-account transaction history (status, JSON, CSV, gap analysis) | [near-accounting-export](https://github.com/PeterSalomonsen/near-accounting-export) router + worker, mounted in-process |
 
-All routes require a NEAR-signed bearer token, verified per request via the `arizportfolio.near` contract's `get_account_id_for_token` view. See [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js).
+All routes require a NEAR **NEP-413 signed message** as a bearer token, verified per request (signature, recipient, timestamp window, and Full-Access-key ownership via `view_access_key_list`). See [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js) and [server/accesscontrol/nep413.js](./server/accesscontrol/nep413.js).
 
 Architecture overview and slice history: [UNIFIED_BACKEND_PLAN.md](./UNIFIED_BACKEND_PLAN.md).
 
@@ -78,11 +78,24 @@ cd contract
 git push
 ```
 
+### ARIZ usage billing (operator deduction)
+
+Optional. When enabled, a daily pass deducts ARIZ from each synced account in proportion to the FastNear API requests the worker made for it. The worker only **records** per-account FastNear request metrics (`fastnear-metrics.json`); all billing lives in the gateway ([server/arizcredits/billing.js](./server/arizcredits/billing.js)), which keeps its own watermark in `billing.json` and deducts the unbilled delta via one batched `deduct` once per UTC day. Disabled unless both of the first two vars are set:
+
+```bash
+ARIZCREDITS_OPERATOR_KEY=ed25519:...   # function-call key on arizcredits.near (method: call_js_func)
+ARIZ_PER_FASTNEAR_REQUEST=...          # raw ARIZ (6 decimals) charged per billable request
+ARIZCREDITS_CONTRACT_ID=arizcredits.near        # optional, this is the default
+ARIZ_BILLABLE_HOSTS=archival-rpc.mainnet.fastnear.com,transfers.main.fastnear.com  # optional override
+```
+
+The operator is `arizcredits.near` itself (the contract's `deduct` guards `predecessor === current_account_id`), so the gateway signs `deduct` as `arizcredits.near` with a **function-call key restricted to `call_js_func`** — never a full-access key. ARIZ returns to the contract treasury. Users opt in by calling `authorize_deduction({operator_account: "arizcredits.near", max_amount_per_day})`; accounts without an authorisation are skipped.
+
 ## Operational notes
 
 - **Worker stalls = missing FASTNEAR_API_KEY.** If accounting JSONs stop updating, check the gateway logs (`flyctl logs --app arizgateway`) for `Operation cancelled - rate limit detected`. The worker calls FastNEAR for nearly every block it walks; without an API key it gets throttled within seconds.
 - **Worker uses archival.** If you see `RPC error in viewAccount for ... at block N: Server error`, `NEAR_RPC_ENDPOINT` is pointing at a non-archival node. Set it to `https://archival-rpc.mainnet.fastnear.com`.
-- **Auth model.** Any registered token (registered via `register_token` on the ariz contract, costs 0.2 NEAR) can read **any** account's data via `/api/accounting/:accountId/...`. This is intentional — account ownership isn't cryptographically verifiable at the gateway, so reads are open to authenticated users. Restriction will move to the worker (which accounts get synced) in a follow-up.
+- **Auth model.** Requests authenticate with a **NEP-413 signed message** (`Authorization: Bearer <base64(JSON)>`); the gateway verifies the signature, recipient, a timestamp window, and that the signing key is a Full Access key on the claimed account ([server/accesscontrol/nep413.js](./server/accesscontrol/nep413.js)). Any signed-in user can read **any** account's data via `/api/accounting/:accountId/...` — account ownership isn't cryptographically verifiable at the gateway, so reads are open to authenticated users. (The legacy `register_token`/`get_account_id_for_token` contract methods are unused now and slated for removal.)
 - **Lazy enrollment.** First authenticated request for a previously-unseen `accountId` adds it to `accounts.json`; the worker picks it up on its next cycle and starts back-filling history.
 
 ## Repository layout
