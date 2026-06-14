@@ -66,6 +66,18 @@ CI deploys on every push to `main` via [.github/workflows/fly-deploy.yml](./.git
 
 Production secrets are managed with `flyctl secrets set` — never committed. The full set is the same as the local `.env` above (`FASTNEAR_API_KEY`, `NEARBLOCKS_API_KEY`, `PIKESPEAK_API_KEY`, the four `ARIZ_GATEWAY_*` vars, and `NEAR_RPC_ENDPOINT` for the worker). The `ARIZ_DATA_DIR` is set to `/data` via `fly.toml`'s `[env]` block.
 
+### Frontend (web4 contract)
+
+The frontend lives in the separate [Ariz-Portfolio](https://github.com/arizas/Ariz-Portfolio) repo and is **compiled into the `arizportfolio.near` contract wasm** — [contract/src/web4/handler.rs](./contract/src/web4/handler.rs) serves `include_str!("index.html.base64")` from `web4_get`. So deploying a frontend change means redeploying the contract.
+
+`contract/src/web4/index.html.base64` is committed (not gitignored) so `main` records exactly what is live on-chain — the on-chain code hash should reproduce from a `cargo near build` of this committed bundle. Because a bare `cargo near build` embeds whatever bundle is currently committed, **deploy with [contract/deploy-frontend.sh](./contract/deploy-frontend.sh)**, which rebuilds from the frontend repo first, deploys (`without-init-call`, state preserved), and re-commits the bundle:
+
+```bash
+cd contract
+./deploy-frontend.sh            # FRONTEND_DIR / CONTRACT_ID overridable; SKIP_COMMIT=1 to skip the commit
+git push
+```
+
 ## Operational notes
 
 - **Worker stalls = missing FASTNEAR_API_KEY.** If accounting JSONs stop updating, check the gateway logs (`flyctl logs --app arizgateway`) for `Operation cancelled - rate limit detected`. The worker calls FastNEAR for nearly every block it walks; without an API key it gets throttled within seconds.
