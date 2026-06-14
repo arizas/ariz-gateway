@@ -4,6 +4,8 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node --test server/accesscontrol/*.test.js server/api/*.test.js",
+    "build:contract": "cd contract && cargo build --target=wasm32-unknown-unknown --release && wasm-opt --signext-lowering -Oz target/wasm32-unknown-unknown/release/ariz_gateway.wasm -o target/wasm32-unknown-unknown/release/ariz_gateway.wasm",
+    "pretest:integration": "npm run build:contract",
     "test:integration": "node --test server/index.test.js",
     "test:arizcredits-upgrade": "node --test arizcredits/sandbox/upgrade.test.js"
   },

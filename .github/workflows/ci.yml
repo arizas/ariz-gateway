@@ -45,6 +45,18 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # wasm-opt (binaryen) is needed by `build:contract` to lower the wasm
+      # sign-extension ops the bundled near-sandbox VM can't load.
+      - name: Install binaryen 116
+        run: |
+          curl -fsSL -o /tmp/binaryen.tar.gz \
+            https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz
+          tar -xzf /tmp/binaryen.tar.gz -C /tmp
+          echo "/tmp/binaryen-version_116/bin" >> "$GITHUB_PATH"
+
+      - name: Run integration tests
+        run: npm run test:integration
+
   arizcredits_upgrade:
     runs-on: ubuntu-latest
 
