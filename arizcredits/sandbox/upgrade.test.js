@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes, createSign } from "node:crypto";
 import { buildArizCreditsJs, buildLegacyArizCreditsJs } from "../src/bundle.js";
+import { createDeductClient } from "../../server/arizcredits/deduct.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
@@ -384,5 +385,53 @@ describe("arizcredits upgrade compatibility", () => {
       await contract.view("ft_balance_of", { account_id: bob.accountId }),
     );
     assert.equal(bobAfter, bobBefore - 400n, "bob deducted; the invalid entry didn't revert it");
+  });
+
+  // Exercises the REAL gateway deduct client (server/arizcredits/deduct.js)
+  // against the sandbox RPC, signing as the contract account.
+  test("gateway deduct client: batches a real deduct against the sandbox", async () => {
+    const carol = await root.createSubAccount("carol");
+    await carol.call(
+      contract.accountId,
+      "storage_deposit",
+      { account_id: carol.accountId, registration_only: true },
+      { attachedDeposit: STORAGE_DEPOSIT },
+    );
+    await carol.call(
+      contract.accountId,
+      "call_js_func",
+      { function_name: "buy_tokens_for_near" },
+      { gas: "300000000000000", attachedDeposit: HALF_NEAR },
+    );
+    await carol.call(contract.accountId, "call_js_func", {
+      function_name: "authorize_deduction",
+      operator_account: contract.accountId,
+      max_amount_per_day: "1000",
+    });
+
+    const operatorKey = (await worker.manager.getKey(contract.accountId)).toString();
+    const client = await createDeductClient({
+      networkId: "sandbox",
+      nodeUrl: worker.rpcAddr,
+      contractId: contract.accountId,
+      operatorKey,
+    });
+
+    const carolBefore = BigInt(
+      await contract.view("ft_balance_of", { account_id: carol.accountId }),
+    );
+    const results = await client.deduct([
+      { user: carol.accountId, amount: "300", description: "fastnear:30" },
+    ]);
+    assert.deepEqual(results, [
+      { user: carol.accountId, status: "deducted", amount: "300" },
+    ]);
+    const carolAfter = BigInt(
+      await contract.view("ft_balance_of", { account_id: carol.accountId }),
+    );
+    assert.equal(carolAfter, carolBefore - 300n, "client deducted carol via the sandbox");
+
+    const auth = await client.viewAuthorisation(carol.accountId);
+    assert.equal(auth.max_per_day, "1000");
   });
 });
