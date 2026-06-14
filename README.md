@@ -13,7 +13,7 @@ Unified Node backend for [Ariz Portfolio](https://github.com/arizas/Ariz-Portfol
 | `/rpc` | Authenticated NEAR JSON-RPC proxy | Forwarded to `ARIZ_GATEWAY_NODE_URL` |
 | `/api/accounting/:accountId/*` | Per-account transaction history (status, JSON, CSV, gap analysis) | [near-accounting-export](https://github.com/PeterSalomonsen/near-accounting-export) router + worker, mounted in-process |
 
-All routes require a NEAR-signed bearer token, verified per request via the `arizportfolio.near` contract's `get_account_id_for_token` view. See [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js).
+All routes require a NEAR **NEP-413 signed message** as a bearer token, verified per request (signature, recipient, timestamp window, and Full-Access-key ownership via `view_access_key_list`). See [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js) and [server/accesscontrol/nep413.js](./server/accesscontrol/nep413.js).
 
 Architecture overview and slice history: [UNIFIED_BACKEND_PLAN.md](./UNIFIED_BACKEND_PLAN.md).
 
@@ -65,6 +65,18 @@ Deployed to Fly.io as `arizgateway` under the `ariz-as` org → `https://arizgat
 CI deploys on every push to `main` via [.github/workflows/fly-deploy.yml](./.github/workflows/fly-deploy.yml). Configuration lives in [fly.toml](./fly.toml). The persistent volume `ariz_data` is mounted at `/data` (declared in `fly.toml`); destroying the app would destroy the volume, so suspend (`flyctl machine stop`) before any teardown.
 
 Production secrets are managed with `flyctl secrets set` — never committed. The full set is the same as the local `.env` above (`FASTNEAR_API_KEY`, `NEARBLOCKS_API_KEY`, `PIKESPEAK_API_KEY`, the four `ARIZ_GATEWAY_*` vars, and `NEAR_RPC_ENDPOINT` for the worker). The `ARIZ_DATA_DIR` is set to `/data` via `fly.toml`'s `[env]` block.
+
+### Frontend (web4 contract)
+
+The frontend lives in the separate [Ariz-Portfolio](https://github.com/arizas/Ariz-Portfolio) repo and is **compiled into the `arizportfolio.near` contract wasm** — [contract/src/web4/handler.rs](./contract/src/web4/handler.rs) serves `include_str!("index.html.base64")` from `web4_get`. So deploying a frontend change means redeploying the contract.
+
+`contract/src/web4/index.html.base64` is committed (not gitignored) so `main` records exactly what is live on-chain — the on-chain code hash should reproduce from a `cargo near build` of this committed bundle. Because a bare `cargo near build` embeds whatever bundle is currently committed, **deploy with [contract/deploy-frontend.sh](./contract/deploy-frontend.sh)**, which rebuilds from the frontend repo first, deploys (`without-init-call`, state preserved), and re-commits the bundle:
+
+```bash
+cd contract
+./deploy-frontend.sh            # FRONTEND_DIR / CONTRACT_ID overridable; SKIP_COMMIT=1 to skip the commit
+git push
+```
 
 ### ARIZ usage billing (operator deduction)
 
