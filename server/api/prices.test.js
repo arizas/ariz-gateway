@@ -204,11 +204,54 @@ describe('prices', () => {
         equal(new URL(calls[0]).searchParams.get('ids'), 'ethereum');
     });
 
-    test('cryptocompare error surfaces to the caller', async () => {
-        globalThis.fetch = async () => jsonResponse({
-            Response: 'Error',
-            Message: 'symbol not found'
-        });
-        await rejects(() => fetchPriceHistory('UNKNOWN', 'USD'), /symbol not found/);
+    test('wNEAR is priced as NEAR (alias) and cached as near', async () => {
+        const calls = [];
+        globalThis.fetch = async (url) => {
+            const u = url.toString();
+            calls.push(u);
+            if (u.includes('cryptocompare.com')) {
+                return jsonResponse({ Response: 'Success', Data: { Data: [{ time: dayUnix('2026-06-14'), close: 4.5 }] } });
+            }
+            throw new Error(`unexpected fetch ${u}`);
+        };
+
+        const out = await fetchPriceHistory('wNEAR', 'USD');
+
+        deepEqual(out, { '2026-06-14': 4.5 });
+        const fsym = new URL(calls.find(c => c.includes('cryptocompare.com'))).searchParams.get('fsym');
+        equal(fsym, 'NEAR', 'wNEAR should be fetched as NEAR');
+        const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'near.json'), 'utf8'));
+        deepEqual(cached, { '2026-06-14': 4.5 });
+        await rejects(() => readFile(join(dataDir, 'prices', 'wnear.json'), 'utf8'));
+    });
+
+    test('falls back to CoinGecko market_chart when CryptoCompare lacks the symbol', async () => {
+        globalThis.fetch = async (url) => {
+            const u = url.toString();
+            if (u.includes('cryptocompare.com')) return jsonResponse({ Response: 'Error', Message: 'fsym not found' });
+            if (u.includes('coingecko.com') && u.includes('market_chart')) {
+                return jsonResponse({ prices: [
+                    [Date.parse('2026-06-14T00:00:00Z'), 0.30],
+                    [Date.parse('2026-06-15T00:00:00Z'), 0.31]
+                ] });
+            }
+            throw new Error(`unexpected fetch ${u}`);
+        };
+
+        const out = await fetchPriceHistory('NPRO', 'USD');
+
+        deepEqual(out, { '2026-06-14': 0.30, '2026-06-15': 0.31 });
+        const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'npro.json'), 'utf8'));
+        deepEqual(cached, { '2026-06-14': 0.30, '2026-06-15': 0.31 });
+    });
+
+    test('unknown token returns empty when neither source has it', async () => {
+        globalThis.fetch = async (url) => {
+            const u = url.toString();
+            if (u.includes('cryptocompare.com')) return jsonResponse({ Response: 'Error', Message: 'symbol not found' });
+            if (u.includes('coingecko.com')) return jsonResponse({ error: 'coin not found' });
+            throw new Error(`unexpected fetch ${u}`);
+        };
+        deepEqual(await fetchPriceHistory('TOTALLYUNKNOWNXYZ', 'USD'), {});
     });
 });

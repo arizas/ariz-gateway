@@ -1,6 +1,8 @@
 import { readForex, readTokenPrices, writeForex, writeTokenPrices } from './store.js';
 import { fetchFullDailyHistory } from './providers/cryptocompare.js';
+import { fetchDailyHistory as fetchCoinGeckoDailyHistory } from './providers/coingecko.js';
 import { fetchHistoryRange as fetchForexHistoryRange } from './providers/frankfurter.js';
+import { coinId } from './token-map.js';
 
 const tokenLoads = new Map();
 const forexLoads = new Map();
@@ -19,7 +21,24 @@ async function loadTokenPrices(symbol) {
     return once(tokenLoads, key, async () => {
         const cached = await readTokenPrices(key);
         if (cached && Object.keys(cached).length > 0) return cached;
-        const fresh = await fetchFullDailyHistory(key);
+
+        // CryptoCompare covers majors with long history; it throws for symbols it
+        // doesn't list. For those (NEAR-ecosystem tokens) fall back to CoinGecko
+        // market_chart by coin id (last 365 days). If neither has it, cache empty
+        // (no price) rather than erroring the whole report.
+        let fresh = {};
+        try {
+            fresh = await fetchFullDailyHistory(key);
+        } catch {
+            fresh = {};
+        }
+        if (Object.keys(fresh).length === 0) {
+            try {
+                fresh = await fetchCoinGeckoDailyHistory(coinId(key));
+            } catch {
+                fresh = {};
+            }
+        }
         await writeTokenPrices(key, fresh);
         return fresh;
     });
