@@ -12,6 +12,7 @@ import { createDeductClient } from './arizcredits/deduct.js';
 import { createBillingPass } from './arizcredits/billing.js';
 import { createAuthorizationChecker } from './arizcredits/authorization.js';
 import { pruneAccounts } from './arizcredits/enrollment.js';
+import { getPayer, setPayer, removeMonitor } from './arizcredits/monitors.js';
 
 const SERVER_PORT = process.env.ARIZ_GATEWAY_PORT ?? 15000;
 const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID ?? 'arizportfolio.testnet';
@@ -79,23 +80,37 @@ app.get('/api/prices/current', auth, async (req, res) => {
 
 app.post('/rpc', auth, handleRpc);
 
-// Path-based account selection. When billing is on, the gateway gates accounting
-// access (and therefore enrollment/syncing) on the account having an active
-// authorisation + ARIZ balance — an unauthorised account gets 402 and never
-// reaches the lazy-enrollment in the (Ariz-agnostic) accounting router.
+// Path-based account selection. When billing is on, each monitored account is
+// paid for by a payer account (monitors.json). The payer is established
+// implicitly: the first authorized + funded account that loads a not-yet-monitored
+// account becomes its payer (and is billed for it). Reads of an already-monitored
+// account stay open to any signed-in user; an unmonitored account that the caller
+// can't pay for gets 402 (and never reaches the library's lazy-enrollment).
 app.use('/api/accounting/:accountId', auth, async (req, res, next) => {
-    // Express resets req.params when entering a mounted router, so stash
-    // the path-derived accountId on req for the upstream getAccountId hook.
-    req.targetAccountId = req.params.accountId;
+    const target = req.params.accountId;
+    req.targetAccountId = target; // Express resets req.params in the mounted router
+
     if (accountGate) {
-        let allowed = false;
-        try { allowed = await accountGate(req.params.accountId); } catch { allowed = false; } // fail closed
-        if (!allowed) {
-            return res.status(402).json({
-                error: 'authorization_required',
-                accountId: req.params.accountId,
-                message: 'Authorize the Ariz gateway (authorize_deduction on arizcredits.near) and hold ARIZ to enable syncing for this account.',
-            });
+        // Is the account currently covered by a valid payer?
+        let covered = false;
+        const payer = getPayer(dataDir, target);
+        if (payer) {
+            try { covered = await accountGate(payer); } catch { covered = false; }
+        }
+        if (!covered) {
+            // Try to claim it for the authenticated requester (the payer).
+            const requester = req.accountId;
+            let canPay = false;
+            try { canPay = await accountGate(requester); } catch { canPay = false; } // fail closed
+            if (canPay) {
+                setPayer(dataDir, target, requester);
+            } else {
+                return res.status(402).json({
+                    error: 'authorization_required',
+                    accountId: target,
+                    message: 'This account is not being monitored. Log in with an account that has authorized the gateway (authorize_deduction on arizcredits.near) and holds ARIZ, then load this account to start monitoring it — you will be billed for it.',
+                });
+            }
         }
     }
     next();
@@ -132,10 +147,19 @@ if (process.env.ARIZ_GATEWAY_DISABLE_ACCOUNTING_WORKER !== 'true') {
 // just syncs whatever remains listed.
 let reconcileTimer = null;
 if (billingEnabled && accountGate) {
+    // An account stays synced only while its payer is still authorised + funded.
+    // Unmonitored accounts (no payer) are pruned too. Fail-safe: an RPC error
+    // leaves the account in place (pruneAccounts keeps accounts whose check throws).
+    const isStillPaid = async (account) => {
+        const payer = getPayer(dataDir, account);
+        if (!payer) return false;       // unmonitored -> prune
+        return accountGate(payer);      // throws on RPC error -> kept (fail-safe)
+    };
     const reconcile = async () => {
         try {
-            const pruned = await pruneAccounts(dataDir, accountGate);
-            if (pruned.length) console.log(`[enrollment] pruned ${pruned.length} unauthorised account(s): ${pruned.join(', ')}`);
+            const pruned = await pruneAccounts(dataDir, isStillPaid);
+            for (const account of pruned) removeMonitor(dataDir, account);
+            if (pruned.length) console.log(`[enrollment] pruned ${pruned.length} unpaid account(s): ${pruned.join(', ')}`);
         } catch (e) {
             console.error('[enrollment] reconciliation failed:', e);
         }
