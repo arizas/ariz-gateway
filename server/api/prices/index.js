@@ -1,7 +1,8 @@
-import { fetchSimplePrice } from './providers/coingecko.js';
+import { fetchSimplePrice, fetchDailyHistory as fetchCoinGeckoDailyHistory } from './providers/coingecko.js';
 import { fetchRecentDailyClose } from './providers/cryptocompare.js';
 import { fetchHistoryRange as fetchForexHistoryRange } from './providers/frankfurter.js';
 import { getPriceHistory } from './getDailyPrice.js';
+import { coinId, toSymbol } from './token-map.js';
 import {
     listCachedCurrencies,
     listCachedTokens,
@@ -11,92 +12,6 @@ import {
     writeTokenPrices
 } from './store.js';
 
-const COIN_IDS = {
-    '$wif': 'dogwifcoin',
-    aave: 'aave',
-    abg: 'ab-group',
-    ada: 'cardano',
-    adi: 'adi-token',
-    aleo: 'aleo',
-    apt: 'aptos',
-    arb: 'arbitrum',
-    aster: 'aster-2',
-    aurora: 'aurora-near',
-    avax: 'avalanche-2',
-    bch: 'bitcoin-cash',
-    bera: 'berachain-bera',
-    blackdragon: 'black-dragon',
-    bnb: 'binancecoin',
-    bome: 'book-of-meme',
-    brett: 'based-brett',
-    btc: 'bitcoin',
-    cbbtc: 'coinbase-wrapped-btc',
-    cfi: 'consumerfi-protocol',
-    cow: 'cow-protocol',
-    dai: 'dai',
-    dash: 'dash',
-    doge: 'dogecoin',
-    eth: 'ethereum',
-    eure: 'monerium-eur-money-2',
-    evaa: 'evaa-protocol',
-    frax: 'frax',
-    gbpe: 'monerium-gbp-emoney',
-    gmx: 'gmx',
-    gno: 'gnosis',
-    hapi: 'hapi',
-    itlx: 'intellex',
-    jambo: 'jambo-2',
-    kaito: 'kaito',
-    knc: 'kyber-network-crystal',
-    link: 'chainlink',
-    loud: 'loud',
-    ltc: 'litecoin',
-    melania: 'melania-meme',
-    mog: 'mog-coin',
-    mon: 'monad',
-    mpdao: 'meta-pool',
-    near: 'near',
-    npro: 'npro',
-    okb: 'okb',
-    op: 'optimism',
-    pengu: 'pudgy-penguins',
-    pepe: 'pepe',
-    pol: 'matic-network',
-    public: 'publicai',
-    rhea: 'rhea-2',
-    safe: 'safe',
-    shib: 'shiba-inu',
-    shitzu: 'shitzu',
-    sol: 'solana',
-    spx: 'spx6900',
-    stnear: 'staked-near',
-    strk: 'starknet',
-    sui: 'sui',
-    sweat: 'sweatcoin',
-    titn: 'thor-wallet',
-    ton: 'the-open-network',
-    trump: 'official-trump',
-    trx: 'tron',
-    turbo: 'turbo',
-    uni: 'uniswap',
-    usad: 'usad',
-    usd1: 'usd1-wlfi',
-    usdc: 'usd-coin',
-    usdcx: 'usdcx',
-    usdf: 'falcon-finance',
-    usdt: 'tether',
-    usdt0: 'usdt0',
-    wbtc: 'wrapped-bitcoin',
-    weth: 'weth',
-    wnear: 'wrapped-near',
-    xaut: 'tether-gold',
-    xbtc: 'xbtc-2',
-    xdai: 'xdai',
-    xlm: 'stellar',
-    xpl: 'plasma',
-    xrp: 'ripple',
-    zec: 'zcash'
-};
 
 const CURRENCYLIST_VS = [
     'aed', 'ars', 'aud', 'bch', 'bdt', 'bhd', 'bmd', 'bnb', 'brl', 'btc',
@@ -110,20 +25,6 @@ const CURRENCYLIST_VS = [
 
 const SPOT_TTL_MS = 60_000;
 const spotCache = new Map();
-
-const SYMBOL_BY_COIN_ID = Object.fromEntries(
-    Object.entries(COIN_IDS).map(([symbol, cgId]) => [cgId, symbol])
-);
-
-function coinId(token) {
-    const key = token.toLowerCase();
-    return COIN_IDS[key] ?? key;
-}
-
-function toSymbol(token) {
-    const key = token.toLowerCase();
-    return SYMBOL_BY_COIN_ID[key] ?? key;
-}
 
 async function spotCached(key, fetcher) {
     const entry = spotCache.get(key);
@@ -171,7 +72,13 @@ export async function runEodUpdate({ now = new Date() } = {}) {
             if (!data) continue;
             const lastDate = Object.keys(data).sort().at(-1);
             if (lastDate && lastDate >= yesterday) continue;
-            const fresh = await fetchRecentDailyClose(symbol, 7);
+            // CryptoCompare for majors; CoinGecko fallback for tokens it doesn't list.
+            let fresh;
+            try {
+                fresh = await fetchRecentDailyClose(symbol, 7);
+            } catch {
+                fresh = await fetchCoinGeckoDailyHistory(coinId(symbol), { days: 7 });
+            }
             let changed = false;
             for (const [date, price] of Object.entries(fresh)) {
                 if (data[date] == null) {
