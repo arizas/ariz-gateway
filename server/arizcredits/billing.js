@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readFastNearMetrics } from 'near-accounting-export';
+import { loadMonitors } from './monitors.js';
 
 // FastNear hosts that cost credits. The free tx-index API (tx.main.fastnear.com)
 // is intentionally excluded.
@@ -20,15 +21,14 @@ function sumBillable(byHost, billableHosts) {
 }
 
 /**
- * The gateway-owned daily billing pass. All billing state lives here; the worker
- * is metrics-only.
+ * The gateway-owned daily billing pass.
  *
- * Each run: read the worker's cumulative per-account FastNear request counts,
- * compute each account's unbilled delta vs a persisted watermark, gate on an
- * active authorisation, clamp the amount to the user's daily cap, and deduct the
- * batch in one transaction. Watermarks advance only for accounts the contract
- * reports as charged, so it's idempotent and restart-safe (re-running the same
- * UTC day is a no-op).
+ * Usage is measured per monitored account (the worker's FastNear metrics), but
+ * charged to that account's PAYER (monitors.json). Each run: compute each
+ * account's unbilled delta vs a persisted per-account watermark, group by payer,
+ * and deduct once per payer (bounded by the payer's daily cap) in one batched
+ * transaction. Per-account watermarks advance only for the portion actually
+ * charged, so a capped overflow rolls to the next day. Idempotent / restart-safe.
  *
  * @param {object} cfg
  * @param {string} cfg.dataDir
@@ -49,71 +49,86 @@ export function createBillingPass({ dataDir, deductClient, ratePerRequest, billa
         fs.writeFileSync(billingFile, JSON.stringify(db, null, 2));
     }
 
-    /** True if the daily pass hasn't run yet for the current UTC day. */
     function shouldRun(now = Date.now()) {
         return load().lastRunDay !== utcDay(now);
     }
 
     async function runOnce({ now = Date.now() } = {}) {
-        const metrics = readFastNearMetrics(dataDir); // { accountId: { host: count } }
+        const metrics = readFastNearMetrics(dataDir); // { account: { host: count } }
+        const monitors = loadMonitors(dataDir);       // { account: payer }
         const db = load();
         db.accounts = db.accounts || {};
 
-        // Build candidate deductions (delta vs watermark, gated + cap-clamped).
-        const candidates = [];
-        for (const [accountId, byHost] of Object.entries(metrics)) {
-            const billableTotal = sumBillable(byHost, billableHosts);
-            const state = db.accounts[accountId] || { billedRequests: 0 };
-            const deltaRequests = billableTotal - (state.billedRequests || 0);
-            if (deltaRequests <= 0) continue;
-
-            let auth = null;
-            try { auth = await deductClient.viewAuthorisation(accountId); } catch { auth = null; }
-            if (!auth) continue; // no active authorisation -> skip
-
-            let amount = rate * BigInt(deltaRequests);
-            const cap = BigInt(auth.max_per_day || '0');
-            if (cap > 0n && amount > cap) amount = cap; // clamp to the user's daily cap
-            if (amount <= 0n) continue;
-
-            // Requests covered by the (possibly clamped) amount — the watermark
-            // only advances by this much, so a capped overflow bills next day.
-            const billedRequestsEquivalent = rate > 0n ? Number(amount / rate) : deltaRequests;
-            candidates.push({ accountId, amount: amount.toString(), billedRequestsEquivalent });
+        // 1. Per-account unbilled delta, grouped by payer.
+        const perPayer = {}; // payer -> [{ account, delta }]
+        for (const [account, byHost] of Object.entries(metrics)) {
+            const payer = monitors[account];
+            if (!payer) continue; // unmonitored -> reconciliation will prune it
+            const billable = sumBillable(byHost, billableHosts);
+            const state = db.accounts[account] || { billedRequests: 0 };
+            const delta = billable - (state.billedRequests || 0);
+            if (delta <= 0) continue;
+            (perPayer[payer] ||= []).push({ account, delta });
         }
 
+        // 2. Per payer: clamp to the payer's daily cap, plan which accounts'
+        //    watermarks advance (greedy until the charged amount is exhausted).
+        const entries = []; // { user, amount, description }
+        const plans = {};   // payer -> [{ account, billRequests }]
+        for (const [payer, items] of Object.entries(perPayer)) {
+            let auth;
+            try { auth = await deductClient.viewAuthorisation(payer); } catch { auth = null; }
+            if (!auth) continue; // payer no longer authorised -> skip (reconciliation prunes)
+
+            const totalDelta = items.reduce((s, i) => s + i.delta, 0);
+            let amount = rate * BigInt(totalDelta);
+            const cap = BigInt(auth.max_per_day || '0');
+            if (cap > 0n && amount > cap) amount = cap;
+            if (amount <= 0n) continue;
+
+            let coveredRequests = rate > 0n ? Number(amount / rate) : totalDelta;
+            const plan = [];
+            for (const it of items) {
+                if (coveredRequests <= 0) break;
+                const take = Math.min(it.delta, coveredRequests);
+                plan.push({ account: it.account, billRequests: take });
+                coveredRequests -= take;
+            }
+            plans[payer] = plan;
+            entries.push({ user: payer, amount: amount.toString(), description: 'fastnear-usage' });
+        }
+
+        // 3. Deduct (batched, chunked), then advance watermarks for charged payers.
         const results = [];
-        for (let i = 0; i < candidates.length; i += batchSize) {
-            const chunk = candidates.slice(i, i + batchSize);
-            const deductions = chunk.map(c => ({ user: c.accountId, amount: c.amount, description: 'fastnear-usage' }));
+        for (let i = 0; i < entries.length; i += batchSize) {
+            const chunk = entries.slice(i, i + batchSize);
             let res;
             try {
-                res = await deductClient.deduct(deductions);
+                res = await deductClient.deduct(chunk);
             } catch (err) {
-                // Whole chunk failed (network/tx) — leave watermarks, retry next run.
-                res = chunk.map(c => ({ user: c.accountId, status: 'error', reason: String(err?.message || err) }));
+                res = chunk.map(e => ({ user: e.user, status: 'error', reason: String(err?.message || err) }));
             }
             const byUser = Object.fromEntries((res || []).map(r => [r.user, r]));
-            for (const c of chunk) {
-                const r = byUser[c.accountId] || { status: 'missing' };
-                // Advance the watermark when the contract charged the user (or
-                // reports an already-today charge, i.e. crash-recovery).
+            for (const e of chunk) {
+                const r = byUser[e.user] || { status: 'missing' };
                 const charged = r.status === 'deducted' || /already deducted today/.test(r.reason || '');
                 if (charged) {
-                    const state = db.accounts[c.accountId] || { billedRequests: 0 };
-                    state.billedRequests = (state.billedRequests || 0) + c.billedRequestsEquivalent;
-                    state.lastBilledAt = new Date(now).toISOString();
-                    db.accounts[c.accountId] = state;
+                    for (const item of plans[e.user] || []) {
+                        const state = db.accounts[item.account] || { billedRequests: 0 };
+                        state.billedRequests = (state.billedRequests || 0) + item.billRequests;
+                        state.lastBilledAt = new Date(now).toISOString();
+                        db.accounts[item.account] = state;
+                    }
                 }
-                results.push({ accountId: c.accountId, status: r.status, reason: r.reason, amount: c.amount });
+                results.push({ payer: e.user, status: r.status, reason: r.reason, amount: e.amount });
             }
         }
 
         db.lastRunDay = utcDay(now);
         save(db);
 
-        const deducted = results.filter(r => r.status === 'deducted');
-        return { deducted, results, total: deducted.length };
+        const charged = results.filter(r => r.status === 'deducted');
+        return { charged, results, total: charged.length };
     }
 
     return { runOnce, shouldRun };
