@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "express": "^4.21.2",
-    "near-accounting-export": "github:PeterSalomonsen/near-accounting-export#4278df75e4156b8c9b82abbb777fd4e4fafb879c",
+    "near-accounting-export": "github:PeterSalomonsen/near-accounting-export#df2bf01a76be30af6330ad8dc5f5ce6ccab8333d",
     "near-api-js": "^2.1.4"
   },
   "devDependencies": {
