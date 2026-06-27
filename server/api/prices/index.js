@@ -47,6 +47,25 @@ export async function fetchPriceHistory(baseToken = 'NEAR', currency = 'USD', to
     return getPriceHistory(toSymbol(baseToken), currency, todate);
 }
 
+// Tokens we've fetched for but found no price anywhere (CryptoCompare + CoinGecko
+// both empty) - e.g. scam tokens and ARIZ credits. Derived live from the cache so
+// it self-heals: the EOD updater keeps re-checking empty entries, and a token that
+// later lists drops off this set automatically. Returned as the lowercase cache
+// keys, which match the CoinGecko id the client sends for unlisted tokens.
+export async function fetchNoPriceTokens() {
+    return spotCached('nopricetokens', async () => {
+        const tokens = await listCachedTokens();
+        const noPrice = [];
+        for (const symbol of tokens) {
+            const data = await readTokenPrices(symbol);
+            if (!data || Object.keys(data).length === 0) {
+                noPrice.push(symbol);
+            }
+        }
+        return noPrice;
+    });
+}
+
 export async function fetchCurrent(tokens, vsCurrencies) {
     if (!tokens || tokens.length === 0) return {};
     const vs = vsCurrencies && vsCurrencies.length > 0 ? vsCurrencies : ['usd'];
