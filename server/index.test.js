@@ -96,9 +96,17 @@ describe('server', { only: false }, () => {
     const authToken = () =>
         createNep413Token(contactAccountKeyPair, contract.accountId, contract.accountId);
 
-    test('connect and get default response', async () => {
+    test('serves the bundled frontend at the root', async () => {
         const response = await fetch(baseUrl());
-        equal(await response.text(), 'nothing here');
+        equal(response.status, 200);
+        ok(response.headers.get('content-type')?.includes('text/html'));
+        ok((await response.text()).includes('<html'));
+    });
+
+    test('client-routed path falls back to the frontend index (SPA)', async () => {
+        const response = await fetch(`${baseUrl()}/accounts`);
+        equal(response.status, 200);
+        ok(response.headers.get('content-type')?.includes('text/html'));
     });
 
     test('unauthenticated /api/prices/currencylist is rejected', async () => {

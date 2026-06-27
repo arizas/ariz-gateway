@@ -12,8 +12,23 @@ Unified Node backend for [Ariz Portfolio](https://github.com/arizas/Ariz-Portfol
 | `/api/prices/current` | Spot price batched across tokens, 60s in-memory TTL | CoinGecko free `/simple/price` |
 | `/rpc` | Authenticated NEAR JSON-RPC proxy | Forwarded to `ARIZ_GATEWAY_NODE_URL` |
 | `/api/accounting/:accountId/*` | Per-account transaction history (status, JSON, CSV, gap analysis) | [near-accounting-export](https://github.com/PeterSalomonsen/near-accounting-export) router + worker, mounted in-process |
+| `/` and client routes (`/accounts`, `/staking`, …) | The bundled Ariz Portfolio frontend (SPA fallback to `index.html`) | `server/public/index.html` |
 
-All routes require a NEAR **NEP-413 signed message** as a bearer token, verified per request (signature, recipient, timestamp window, and Full-Access-key ownership via `view_access_key_list`). See [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js) and [server/accesscontrol/nep413.js](./server/accesscontrol/nep413.js).
+All **API** routes require a NEAR **NEP-413 signed message** as a bearer token, verified per request (signature, recipient, timestamp window, and Full-Access-key ownership via `view_access_key_list`). See [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js) and [server/accesscontrol/nep413.js](./server/accesscontrol/nep413.js). The static frontend routes are unauthenticated (the app must load before the user signs in).
+
+### Frontend hosting
+
+The gateway serves the bundled Ariz Portfolio frontend from `server/public/index.html`
+so the app can run on this origin. Hosting it here — rather than on web4, which serves
+with fixed headers — lets us set the cross-origin isolation headers the OPFS-based
+`wasm-git` build needs (`SharedArrayBuffer` requires `COOP: same-origin` + `COEP`).
+Opt in with `ARIZ_FRONTEND_COEP=credentialless` (or `require-corp`); unset by default
+so the current CDN-dependent app keeps working until those dependencies are
+self-hosted. Regenerate the bundle from the Ariz-Portfolio checkout:
+
+```bash
+yarn dist && cp dist/index.html ../ariz-gateway/server/public/index.html
+```
 
 Architecture overview and slice history: [UNIFIED_BACKEND_PLAN.md](./UNIFIED_BACKEND_PLAN.md).
 
