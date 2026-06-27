@@ -7,6 +7,7 @@ import { deepEqual, equal, ok, rejects } from 'node:assert/strict';
 import {
     fetchCurrencyList,
     fetchCurrent,
+    fetchNoPriceTokens,
     fetchPriceHistory,
     runEodUpdate
 } from './prices/index.js';
@@ -253,5 +254,18 @@ describe('prices', () => {
             throw new Error(`unexpected fetch ${u}`);
         };
         deepEqual(await fetchPriceHistory('TOTALLYUNKNOWNXYZ', 'USD'), {});
+    });
+
+    test('nopricetokens lists cached tokens with an empty price map (the no-price set)', async () => {
+        await mkdir(join(dataDir, 'prices'), { recursive: true });
+        // A token with prices, and two with none (scam token + ARIZ credits).
+        await writeFile(join(dataDir, 'prices', 'near.json'), JSON.stringify({ '2024-06-22': 5.0 }));
+        await writeFile(join(dataDir, 'prices', 'scamtoken.json'), JSON.stringify({}));
+        await writeFile(join(dataDir, 'prices', 'ariz.json'), JSON.stringify({}));
+        globalThis.fetch = async (url) => { throw new Error(`unexpected fetch ${url}`); };
+
+        const noPrice = await fetchNoPriceTokens();
+
+        deepEqual([...noPrice].sort(), ['ariz', 'scamtoken']);
     });
 });

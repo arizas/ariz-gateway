@@ -2,6 +2,7 @@ import express from 'express';
 import {
     fetchCurrencyList,
     fetchCurrent,
+    fetchNoPriceTokens,
     fetchPriceHistory,
     startEodScheduler
 } from './api/prices/index.js';
@@ -69,6 +70,11 @@ app.get('/api/prices/history', auth, async (req, res) => {
         null,
         1
     ));
+});
+
+app.get('/api/prices/nopricetokens', auth, async (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(await fetchNoPriceTokens(), null, 1));
 });
 
 app.get('/api/prices/current', auth, async (req, res) => {
