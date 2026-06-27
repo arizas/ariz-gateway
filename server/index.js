@@ -1,4 +1,7 @@
 import express from 'express';
+import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import {
     fetchCurrencyList,
     fetchCurrent,
@@ -19,6 +22,24 @@ const contractId = process.env.ARIZ_GATEWAY_CONTRACT_ID ?? 'arizportfolio.testne
 const networkId = process.env.ARIZ_GATEWAY_NEAR_NETWORK_ID ?? 'testnet';
 const nodeUrl = process.env.ARIZ_GATEWAY_NODE_URL ?? 'https://rpc.testnet.near.org';
 const dataDir = process.env.ARIZ_DATA_DIR ?? '/data';
+
+// Serve the bundled Ariz Portfolio frontend (a single self-contained index.html)
+// from this origin. Hosting it here rather than on web4 lets us set the
+// cross-origin isolation headers the OPFS wasm-git build needs - web4 serves with
+// fixed headers and can't. Opt in to isolation with ARIZ_FRONTEND_COEP
+// (credentialless | require-corp); default off so the current CDN-dependent app
+// keeps working until those dependencies are self-hosted.
+const frontendDir = process.env.ARIZ_FRONTEND_DIR ?? fileURLToPath(new URL('./public', import.meta.url));
+const frontendIndex = join(frontendDir, 'index.html');
+const frontendEnabled = existsSync(frontendIndex);
+const frontendCoep = process.env.ARIZ_FRONTEND_COEP; // 'credentialless' | 'require-corp' | undefined
+
+function setIsolationHeaders(res) {
+    if (frontendCoep) {
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        res.setHeader('Cross-Origin-Embedder-Policy', frontendCoep);
+    }
+}
 
 // ARIZ usage billing (operator deduction). Disabled unless an operator key and a
 // per-request rate are configured.
@@ -118,6 +139,25 @@ app.use('/api/accounting/:accountId', auth, async (req, res, next) => {
     getAccountId: req => req.targetAccountId,
     dataDir
 }));
+
+if (frontendEnabled) {
+    // Static assets first, then an SPA fallback to index.html for client-routed
+    // paths (/accounts, /staking, ...). API routes are registered above, so they
+    // take precedence; only non-/api, non-/rpc GETs fall through to the app.
+    app.use((req, res, next) => {
+        if (req.method === 'GET' || req.method === 'HEAD') setIsolationHeaders(res);
+        next();
+    });
+    app.use(express.static(frontendDir, { index: false }));
+    app.use((req, res, next) => {
+        if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/rpc')) {
+            return next();
+        }
+        setIsolationHeaders(res);
+        res.sendFile(frontendIndex);
+    });
+    console.log(`Serving frontend from ${frontendDir}${frontendCoep ? ` (cross-origin isolation: ${frontendCoep})` : ''}`);
+}
 
 app.use((req, res) => {
     res.end('nothing here');
