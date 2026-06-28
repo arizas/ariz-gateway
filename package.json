@@ -3,13 +3,14 @@
   "license": "MIT",
   "scripts": {
     "start": "node server/index.js",
-    "test": "node --test server/accesscontrol/*.test.js server/api/*.test.js server/arizcredits/*.test.js",
+    "test": "node --test server/git.test.js server/accesscontrol/*.test.js server/api/*.test.js server/arizcredits/*.test.js",
     "build:contract": "cd contract && cargo build --target=wasm32-unknown-unknown --release && wasm-opt --signext-lowering -Oz target/wasm32-unknown-unknown/release/ariz_gateway.wasm -o target/wasm32-unknown-unknown/release/ariz_gateway.wasm",
     "pretest:integration": "npm run build:contract",
     "test:integration": "node --test server/index.test.js",
     "test:arizcredits-upgrade": "node --test arizcredits/sandbox/upgrade.test.js"
   },
   "dependencies": {
+    "cgi": "^0.3.1",
     "express": "^4.21.2",
     "near-accounting-export": "github:PeterSalomonsen/near-accounting-export#df2bf01a76be30af6330ad8dc5f5ce6ccab8333d",
     "near-api-js": "^2.1.4"

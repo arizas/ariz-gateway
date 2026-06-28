@@ -11,6 +11,7 @@ import {
 } from './api/prices/index.js';
 import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
+import { createGitHandler } from './git.js';
 import { createRouter as createAccountingRouter, startWorker as startAccountingWorker } from 'near-accounting-export';
 import { createDeductClient } from './arizcredits/deduct.js';
 import { createBillingPass } from './arizcredits/billing.js';
@@ -73,6 +74,7 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.method === 'OPTIONS') {
         res.setHeader('Access-Control-Allow-Headers', '*');
+        res.setHeader('Access-Control-Allow-Methods', '*');
         res.end();
         return;
     }
@@ -146,6 +148,27 @@ app.use('/api/accounting/:accountId', auth, async (req, res, next) => {
     dataDir
 }));
 
+// Git smart-HTTP: a bare repo per authenticated account under <dataDir>/git,
+// for storing the user's portfolio data repo on the gateway (the wasm-git remote).
+// When billing is on, it's gated on the same authorised + funded check as
+// accounting (a paying-user feature). Mounted before the frontend so the SPA
+// fallback never swallows /git requests.
+const gitHandler = createGitHandler({ dataDir });
+app.use('/git', auth, async (req, res, next) => {
+    if (accountGate) {
+        let authorized = false;
+        try { authorized = await accountGate(req.accountId); } catch { authorized = false; } // fail closed
+        if (!authorized) {
+            return res.status(402).json({
+                error: 'authorization_required',
+                accountId: req.accountId,
+                message: 'A git repository on the gateway requires an account that has authorized the gateway (authorize_deduction on arizcredits.near) and holds ARIZ.',
+            });
+        }
+    }
+    gitHandler(req, res);
+});
+
 if (frontendEnabled) {
     // Static assets first, then an SPA fallback to index.html for client-routed
     // paths (/accounts, /staking, ...). API routes are registered above, so they
@@ -156,7 +179,7 @@ if (frontendEnabled) {
     });
     app.use(express.static(frontendDir, { index: false }));
     app.use((req, res, next) => {
-        if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/rpc')) {
+        if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/rpc') || req.path.startsWith('/git')) {
             return next();
         }
         setIsolationHeaders(res);
