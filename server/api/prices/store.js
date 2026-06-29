@@ -29,11 +29,30 @@ async function writeJsonAtomic(path, dir, data) {
     await rename(tmp, path);
 }
 
+// Token symbols are not safe to use directly as file names: scam tokens can embed
+// a whole URL or sentence in their symbol (e.g. "Claim Near Airdrop at
+// https://..."), and the "/" then makes join() treat it as a path into a
+// non-existent directory, so the write throws ENOENT and crashes the process.
+// encodeURIComponent strips path separators while leaving normal symbols
+// (near, usd-coin) unchanged, so it's safe and backward-compatible with existing
+// cache files. Pair it with decodeKey on the way out so listed names round-trip.
+function fileKey(name) {
+    return encodeURIComponent(name.toLowerCase());
+}
+
+function decodeKey(name) {
+    try {
+        return decodeURIComponent(name);
+    } catch {
+        return name;
+    }
+}
+
 async function listJsonFiles(dir) {
     try {
         return (await readdir(dir))
             .filter(f => f.endsWith('.json'))
-            .map(f => f.slice(0, -'.json'.length));
+            .map(f => decodeKey(f.slice(0, -'.json'.length)));
     } catch (err) {
         if (err.code === 'ENOENT') return [];
         throw err;
@@ -41,12 +60,12 @@ async function listJsonFiles(dir) {
 }
 
 export async function readTokenPrices(symbol) {
-    return readJson(join(pricesDir(), `${symbol.toLowerCase()}.json`));
+    return readJson(join(pricesDir(), `${fileKey(symbol)}.json`));
 }
 
 export async function writeTokenPrices(symbol, data) {
     const dir = pricesDir();
-    await writeJsonAtomic(join(dir, `${symbol.toLowerCase()}.json`), dir, data);
+    await writeJsonAtomic(join(dir, `${fileKey(symbol)}.json`), dir, data);
 }
 
 export async function readForex(currency) {
