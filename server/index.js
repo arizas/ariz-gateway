@@ -202,11 +202,27 @@ app.use((err, req, res, _next) => {
     }
 });
 
-startEodScheduler();
+// Start listening immediately, before any background job. A failing worker must
+// not be able to prevent the gateway from binding its port or crash-loop the
+// process - the HTTP API (including the price endpoints) has to stay up
+// independently of the background workers.
+const server = app.listen(SERVER_PORT, () => {
+    console.log('server listening at port', SERVER_PORT);
+});
+
+try {
+    startEodScheduler();
+} catch (e) {
+    console.error('Failed to start EOD price scheduler; gateway continues:', e);
+}
 
 let accountingWorker = null;
 if (process.env.ARIZ_GATEWAY_DISABLE_ACCOUNTING_WORKER !== 'true') {
-    accountingWorker = await startAccountingWorker({ dataDir });
+    try {
+        accountingWorker = await startAccountingWorker({ dataDir });
+    } catch (e) {
+        console.error('Failed to start accounting worker; gateway continues without it:', e);
+    }
 }
 
 // Enrollment reconciliation: periodically prune accounts that no longer qualify
@@ -274,10 +290,6 @@ if (billingEnabled) {
 } else {
     console.log('ARIZ usage billing disabled (set ARIZCREDITS_OPERATOR_KEY + ARIZ_PER_FASTNEAR_REQUEST to enable)');
 }
-
-const server = app.listen(SERVER_PORT, () => {
-    console.log('server listening at port', SERVER_PORT);
-});
 
 async function shutdown() {
     server.close();
