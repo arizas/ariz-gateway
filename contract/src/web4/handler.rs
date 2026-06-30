@@ -4,12 +4,13 @@ use crate::{
 };
 
 pub fn web4_get(_contract: &Contract, _request: Web4Request) -> Web4Response {
-    /*Web4Response::BodyUrl { body_url: 
-        String::from("https://ipfs.web4.near.page/ipfs/bafybeic5hrqxnl4jj4fa6adjlztevqfor5laj4bzgu55darlienzxjnyde/")
-    }*/
-    Web4Response::Body {
-        body: include_str!("index.html.base64").to_string(),
-        content_type: "text/html".to_string()
+    // Serve the frontend bundle from the gateway (which serves the same bundle at
+    // its root), so frontend updates only require redeploying the gateway — not the
+    // contract. The SAB-free OPFS build needs no special headers, so it's fine that
+    // web4 serves the gateway's bundle. A fixed body_url for every path lets the SPA
+    // router handle client routes (/portfolio, /year-report, ...).
+    Web4Response::BodyUrl {
+        body_url: String::from("https://arizgateway.fly.dev/"),
     }
 }
 
