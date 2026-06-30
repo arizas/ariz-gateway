@@ -83,15 +83,11 @@ Production secrets are managed with `flyctl secrets set` — never committed. Th
 
 ### Frontend (web4 contract)
 
-The frontend lives in the separate [Ariz-Portfolio](https://github.com/arizas/Ariz-Portfolio) repo and is **compiled into the `arizportfolio.near` contract wasm** — [contract/src/web4/handler.rs](./contract/src/web4/handler.rs) serves `include_str!("index.html.base64")` from `web4_get`. So deploying a frontend change means redeploying the contract.
+The frontend lives in the separate [Ariz-Portfolio](https://github.com/arizas/Ariz-Portfolio) repo. The `arizportfolio.near` web4 contract no longer embeds the bundle — [contract/src/web4/handler.rs](./contract/src/web4/handler.rs) returns `Web4Response::BodyUrl { body_url: "https://arizgateway.fly.dev/" }`, so web4 fetches the live bundle the gateway serves from [server/public/index.html](./server/public/index.html). **A frontend change is just a gateway deploy — no contract redeploy.**
 
-`contract/src/web4/index.html.base64` is committed (not gitignored) so `main` records exactly what is live on-chain — the on-chain code hash should reproduce from a `cargo near build` of this committed bundle. Because a bare `cargo near build` embeds whatever bundle is currently committed, **deploy with [contract/deploy-frontend.sh](./contract/deploy-frontend.sh)**, which rebuilds from the frontend repo first, deploys (`without-init-call`, state preserved), and re-commits the bundle:
+To ship a frontend update, build the bundle in the Ariz-Portfolio repo (`yarn dist`), copy `dist/index.html` to `server/public/index.html` here, commit and push — Fly auto-deploys. (`arizportfolio.near.page` may briefly cache the previous body.) The same fixed `body_url` is returned for every path, so the SPA router handles client routes (`/portfolio`, `/year-report`, …).
 
-```bash
-cd contract
-./deploy-frontend.sh            # FRONTEND_DIR / CONTRACT_ID overridable; SKIP_COMMIT=1 to skip the commit
-git push
-```
+The contract itself only needs redeploying if the `body_url` or web4 behavior changes.
 
 ### ARIZ usage billing (operator deduction)
 
