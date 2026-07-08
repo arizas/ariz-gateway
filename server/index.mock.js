@@ -19,7 +19,7 @@ for (const [ts, price] of history.prices) {
 }
 await writeFile(join(dataDir, 'prices', 'near.json'), JSON.stringify(nearPrices));
 
-const PROVIDER_HOSTS = ['min-api.cryptocompare.com', 'api.coingecko.com', 'api.frankfurter.dev'];
+const PROVIDER_HOSTS = ['coins.llama.fi', 'api.coingecko.com', 'api.frankfurter.dev'];
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input?.url ?? String(input);

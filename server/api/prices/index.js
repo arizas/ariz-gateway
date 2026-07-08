@@ -1,5 +1,5 @@
 import { fetchSimplePrice, fetchDailyHistory as fetchCoinGeckoDailyHistory } from './providers/coingecko.js';
-import { fetchRecentDailyClose } from './providers/cryptocompare.js';
+import { fetchRecentDailyClose as fetchDefiLlamaRecentDailyClose } from './providers/defillama.js';
 import { fetchHistoryRange as fetchForexHistoryRange } from './providers/frankfurter.js';
 import { getPriceHistory } from './getDailyPrice.js';
 import { coinId, toSymbol } from './token-map.js';
@@ -47,11 +47,12 @@ export async function fetchPriceHistory(baseToken = 'NEAR', currency = 'USD', to
     return getPriceHistory(toSymbol(baseToken), currency, todate);
 }
 
-// Tokens we've fetched for but found no price anywhere (CryptoCompare + CoinGecko
-// both empty) - e.g. scam tokens and ARIZ credits. Derived live from the cache so
-// it self-heals: the EOD updater keeps re-checking empty entries, and a token that
-// later lists drops off this set automatically. Returned as the lowercase cache
-// keys, which match the CoinGecko id the client sends for unlisted tokens.
+// Tokens we've fetched for but found no price anywhere (DeFiLlama + CoinGecko both
+// empty) - e.g. scam tokens and ARIZ credits. Derived live from the cache: a token
+// that later starts listing drops off this set once loadTokenPrices re-fetches it
+// on demand (the hourly EOD updater skips empty entries to avoid rate limits).
+// Returned as the lowercase cache keys, which match the CoinGecko id the client
+// sends for unlisted tokens.
 export async function fetchNoPriceTokens() {
     return spotCached('nopricetokens', async () => {
         const tokens = await listCachedTokens();
@@ -89,14 +90,19 @@ export async function runEodUpdate({ now = new Date() } = {}) {
         try {
             const data = await readTokenPrices(symbol);
             if (!data) continue;
+            // Skip known no-price tokens (empty cache) - re-fetching them every hour
+            // is what rate-limits the providers, and there's nothing to advance. A
+            // token that later starts listing is retried on-demand by loadTokenPrices.
+            if (Object.keys(data).length === 0) continue;
             const lastDate = Object.keys(data).sort().at(-1);
             if (lastDate && lastDate >= yesterday) continue;
-            // CryptoCompare for majors; CoinGecko fallback for tokens it doesn't list.
+            // DeFiLlama (no key) for recent closes; CoinGecko fallback. Both by id.
+            const id = coinId(symbol);
             let fresh;
             try {
-                fresh = await fetchRecentDailyClose(symbol, 7);
+                fresh = await fetchDefiLlamaRecentDailyClose(id, 7);
             } catch {
-                fresh = await fetchCoinGeckoDailyHistory(coinId(symbol), { days: 7 });
+                fresh = await fetchCoinGeckoDailyHistory(id, { days: 7 });
             }
             let changed = false;
             for (const [date, price] of Object.entries(fresh)) {
