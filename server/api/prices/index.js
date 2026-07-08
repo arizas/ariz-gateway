@@ -96,13 +96,21 @@ export async function runEodUpdate({ now = new Date() } = {}) {
             if (Object.keys(data).length === 0) continue;
             const lastDate = Object.keys(data).sort().at(-1);
             if (lastDate && lastDate >= yesterday) continue;
+            // Fetch enough days to bridge the whole gap since the last cached date -
+            // a fixed 7-day window can't backfill a longer stall (downtime / redeploy
+            // / provider outage), which would leave a permanent hole. Min 7, capped at
+            // DeFiLlama's 500-point limit (CoinGecko's fallback tops out at 365).
+            const gapDays = lastDate
+                ? Math.min(500, Math.max(7, Math.ceil(
+                    (Date.parse(`${yesterday}T00:00:00Z`) - Date.parse(`${lastDate}T00:00:00Z`)) / 86_400_000) + 2))
+                : 7;
             // DeFiLlama (no key) for recent closes; CoinGecko fallback. Both by id.
             const id = coinId(symbol);
             let fresh;
             try {
-                fresh = await fetchDefiLlamaRecentDailyClose(id, 7);
+                fresh = await fetchDefiLlamaRecentDailyClose(id, gapDays);
             } catch {
-                fresh = await fetchCoinGeckoDailyHistory(id, { days: 7 });
+                fresh = await fetchCoinGeckoDailyHistory(id, { days: Math.min(365, gapDays) });
             }
             let changed = false;
             for (const [date, price] of Object.entries(fresh)) {

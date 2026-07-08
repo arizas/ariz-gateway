@@ -144,6 +144,29 @@ describe('prices', () => {
         equal(cached['2024-06-21'], 5.0);
     });
 
+    test('runEodUpdate bridges a multi-day gap, not just a fixed window', async () => {
+        await mkdir(join(dataDir, 'prices'), { recursive: true });
+        await writeFile(join(dataDir, 'prices', 'near.json'), JSON.stringify({ '2024-06-10': 5.0 }));
+        let spanRequested = null;
+        globalThis.fetch = async (url) => {
+            const u = url.toString();
+            if (u.includes('coins.llama.fi')) {
+                spanRequested = Number(new URL(u).searchParams.get('span'));
+                return llamaChartResponse('near', { '2024-06-21': 6.0, '2024-06-22': 6.5 });
+            }
+            throw new Error(`unexpected fetch ${u}`);
+        };
+
+        await runEodUpdate({ now: new Date('2024-06-23T01:00:00Z') });
+
+        const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'near.json'), 'utf8'));
+        equal(cached['2024-06-22'], 6.5);
+        equal(cached['2024-06-21'], 6.0);
+        // ~12-day gap -> request must span the gap (not a fixed 7), so 06-30-style
+        // holes older than a week still get backfilled.
+        ok(spanRequested >= 14, `expected span >= 14 for a ~12-day gap, got ${spanRequested}`);
+    });
+
     test('runEodUpdate skips up-to-date forex caches', async () => {
         await mkdir(join(dataDir, 'forex'), { recursive: true });
         await writeFile(join(dataDir, 'forex', 'nok.json'), JSON.stringify({
