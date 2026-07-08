@@ -24,6 +24,18 @@ function dayUnix(dateStr) {
     return Math.floor(new Date(`${dateStr}T00:00:00Z`).getTime() / 1000);
 }
 
+// DeFiLlama /chart response for one coin: { coins: { 'coingecko:<id>': { prices } } }.
+function llamaChartResponse(coinGeckoId, priceMap) {
+    return jsonResponse({
+        coins: {
+            [`coingecko:${coinGeckoId}`]: {
+                confidence: 0.99,
+                prices: Object.entries(priceMap).map(([date, price]) => ({ timestamp: dayUnix(date), price }))
+            }
+        }
+    });
+}
+
 describe('prices', () => {
     let dataDir;
     let originalFetch;
@@ -53,21 +65,13 @@ describe('prices', () => {
         deepEqual(result, { '2024-06-22': 5.0, '2024-06-23': 5.5 });
     });
 
-    test('history backfills from CryptoCompare on first call and persists cache', async () => {
+    test('history backfills from DeFiLlama on first call and persists cache', async () => {
         const calls = [];
         globalThis.fetch = async (url) => {
             const u = url.toString();
             calls.push(u);
-            if (u.includes('cryptocompare.com')) {
-                return jsonResponse({
-                    Response: 'Success',
-                    Data: {
-                        Data: [
-                            { time: dayUnix('2024-06-22'), close: 5.0 },
-                            { time: dayUnix('2024-06-23'), close: 5.5 }
-                        ]
-                    }
-                });
+            if (u.includes('coins.llama.fi')) {
+                return llamaChartResponse('foo', { '2024-06-22': 5.0, '2024-06-23': 5.5 });
             }
             throw new Error(`unexpected fetch ${u}`);
         };
@@ -77,7 +81,7 @@ describe('prices', () => {
         deepEqual(out, { '2024-06-22': 5.0, '2024-06-23': 5.5 });
         const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'foo.json'), 'utf8'));
         deepEqual(cached, { '2024-06-22': 5.0, '2024-06-23': 5.5 });
-        ok(calls.some(c => c.includes('cryptocompare.com')));
+        ok(calls.some(c => c.includes('coins.llama.fi/chart/coingecko:foo')));
     });
 
     test('history converts USD to fiat using forex rates with carry-forward', async () => {
@@ -127,11 +131,8 @@ describe('prices', () => {
             '2024-06-21': 5.0
         }));
         globalThis.fetch = async (url) => {
-            if (url.toString().includes('cryptocompare.com')) {
-                return jsonResponse({
-                    Response: 'Success',
-                    Data: { Data: [{ time: dayUnix('2024-06-22'), close: 5.5 }] }
-                });
+            if (url.toString().includes('coins.llama.fi')) {
+                return llamaChartResponse('near', { '2024-06-22': 5.5 });
             }
             throw new Error(`unexpected fetch ${url}`);
         };
@@ -141,6 +142,29 @@ describe('prices', () => {
         const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'near.json'), 'utf8'));
         equal(cached['2024-06-22'], 5.5);
         equal(cached['2024-06-21'], 5.0);
+    });
+
+    test('runEodUpdate bridges a multi-day gap, not just a fixed window', async () => {
+        await mkdir(join(dataDir, 'prices'), { recursive: true });
+        await writeFile(join(dataDir, 'prices', 'near.json'), JSON.stringify({ '2024-06-10': 5.0 }));
+        let spanRequested = null;
+        globalThis.fetch = async (url) => {
+            const u = url.toString();
+            if (u.includes('coins.llama.fi')) {
+                spanRequested = Number(new URL(u).searchParams.get('span'));
+                return llamaChartResponse('near', { '2024-06-21': 6.0, '2024-06-22': 6.5 });
+            }
+            throw new Error(`unexpected fetch ${u}`);
+        };
+
+        await runEodUpdate({ now: new Date('2024-06-23T01:00:00Z') });
+
+        const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'near.json'), 'utf8'));
+        equal(cached['2024-06-22'], 6.5);
+        equal(cached['2024-06-21'], 6.0);
+        // ~12-day gap -> request must span the gap (not a fixed 7), so 06-30-style
+        // holes older than a week still get backfilled.
+        ok(spanRequested >= 14, `expected span >= 14 for a ~12-day gap, got ${spanRequested}`);
     });
 
     test('runEodUpdate skips up-to-date forex caches', async () => {
@@ -159,16 +183,27 @@ describe('prices', () => {
         equal(fetched, false);
     });
 
+    test('runEodUpdate skips no-price (empty) token caches to avoid rate limits', async () => {
+        await mkdir(join(dataDir, 'prices'), { recursive: true });
+        await writeFile(join(dataDir, 'prices', 'scamtoken.json'), JSON.stringify({}));
+        let fetched = false;
+        globalThis.fetch = async () => {
+            fetched = true;
+            throw new Error('should not fetch for an empty (no-price) token');
+        };
+
+        await runEodUpdate({ now: new Date('2024-06-23T01:00:00Z') });
+
+        equal(fetched, false);
+    });
+
     test('basetoken accepts both CoinGecko ids and ticker symbols (regression)', async () => {
         const calls = [];
         globalThis.fetch = async (url) => {
             const u = url.toString();
             calls.push(u);
-            if (u.includes('cryptocompare.com')) {
-                return jsonResponse({
-                    Response: 'Success',
-                    Data: { Data: [{ time: dayUnix('2024-06-23'), close: 3500 }] }
-                });
+            if (u.includes('coins.llama.fi')) {
+                return llamaChartResponse('ethereum', { '2024-06-23': 3500 });
             }
             throw new Error(`unexpected fetch ${u}`);
         };
@@ -179,11 +214,12 @@ describe('prices', () => {
         deepEqual(fromCgId, { '2024-06-23': 3500 });
         deepEqual(fromSymbol, fromCgId);
 
-        const cryptoCompareCalls = calls.filter(c => c.includes('cryptocompare.com'));
-        ok(cryptoCompareCalls.length >= 1, 'expected at least one CryptoCompare call');
-        for (const call of cryptoCompareCalls) {
-            const fsym = new URL(call).searchParams.get('fsym');
-            equal(fsym, 'ETH', `CryptoCompare fsym should be ETH, got ${fsym}`);
+        // Both the ticker ('eth') and the CoinGecko id ('ethereum') resolve to the
+        // same DeFiLlama coin key.
+        const llamaCalls = calls.filter(c => c.includes('coins.llama.fi'));
+        ok(llamaCalls.length >= 1, 'expected at least one DeFiLlama call');
+        for (const call of llamaCalls) {
+            ok(call.includes('coingecko:ethereum'), `DeFiLlama coin should be coingecko:ethereum, got ${call}`);
         }
 
         const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'eth.json'), 'utf8'));
@@ -210,8 +246,8 @@ describe('prices', () => {
         globalThis.fetch = async (url) => {
             const u = url.toString();
             calls.push(u);
-            if (u.includes('cryptocompare.com')) {
-                return jsonResponse({ Response: 'Success', Data: { Data: [{ time: dayUnix('2026-06-14'), close: 4.5 }] } });
+            if (u.includes('coins.llama.fi')) {
+                return llamaChartResponse('near', { '2026-06-14': 4.5 });
             }
             throw new Error(`unexpected fetch ${u}`);
         };
@@ -219,17 +255,16 @@ describe('prices', () => {
         const out = await fetchPriceHistory('wNEAR', 'USD');
 
         deepEqual(out, { '2026-06-14': 4.5 });
-        const fsym = new URL(calls.find(c => c.includes('cryptocompare.com'))).searchParams.get('fsym');
-        equal(fsym, 'NEAR', 'wNEAR should be fetched as NEAR');
+        ok(calls.find(c => c.includes('coins.llama.fi')).includes('coingecko:near'), 'wNEAR should be fetched as coingecko:near');
         const cached = JSON.parse(await readFile(join(dataDir, 'prices', 'near.json'), 'utf8'));
         deepEqual(cached, { '2026-06-14': 4.5 });
         await rejects(() => readFile(join(dataDir, 'prices', 'wnear.json'), 'utf8'));
     });
 
-    test('falls back to CoinGecko market_chart when CryptoCompare lacks the symbol', async () => {
+    test('falls back to CoinGecko market_chart when DeFiLlama lacks the token', async () => {
         globalThis.fetch = async (url) => {
             const u = url.toString();
-            if (u.includes('cryptocompare.com')) return jsonResponse({ Response: 'Error', Message: 'fsym not found' });
+            if (u.includes('coins.llama.fi')) return llamaChartResponse('npro', {}); // no prices
             if (u.includes('coingecko.com') && u.includes('market_chart')) {
                 return jsonResponse({ prices: [
                     [Date.parse('2026-06-14T00:00:00Z'), 0.30],
@@ -249,7 +284,7 @@ describe('prices', () => {
     test('unknown token returns empty when neither source has it', async () => {
         globalThis.fetch = async (url) => {
             const u = url.toString();
-            if (u.includes('cryptocompare.com')) return jsonResponse({ Response: 'Error', Message: 'symbol not found' });
+            if (u.includes('coins.llama.fi')) return llamaChartResponse('totallyunknownxyz', {}); // no prices
             if (u.includes('coingecko.com')) return jsonResponse({ error: 'coin not found' });
             throw new Error(`unexpected fetch ${u}`);
         };

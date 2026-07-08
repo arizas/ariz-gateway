@@ -1,5 +1,5 @@
 import { readForex, readTokenPrices, writeForex, writeTokenPrices } from './store.js';
-import { fetchFullDailyHistory } from './providers/cryptocompare.js';
+import { fetchFullDailyHistory as fetchDefiLlamaFullDailyHistory } from './providers/defillama.js';
 import { fetchDailyHistory as fetchCoinGeckoDailyHistory } from './providers/coingecko.js';
 import { fetchHistoryRange as fetchForexHistoryRange } from './providers/frankfurter.js';
 import { coinId } from './token-map.js';
@@ -22,19 +22,20 @@ async function loadTokenPrices(symbol) {
         const cached = await readTokenPrices(key);
         if (cached && Object.keys(cached).length > 0) return cached;
 
-        // CryptoCompare covers majors with long history; it throws for symbols it
-        // doesn't list. For those (NEAR-ecosystem tokens) fall back to CoinGecko
-        // market_chart by coin id (last 365 days). If neither has it, cache empty
-        // (no price) rather than erroring the whole report.
+        // DeFiLlama (no API key, multi-year history via pagination) is the primary
+        // source; CoinGecko market_chart (365 days) is the fallback for anything it
+        // doesn't have. Both are addressed by CoinGecko id. If neither has it, cache
+        // empty (no price) rather than erroring the whole report.
+        const id = coinId(key);
         let fresh = {};
         try {
-            fresh = await fetchFullDailyHistory(key);
+            fresh = await fetchDefiLlamaFullDailyHistory(id);
         } catch {
             fresh = {};
         }
         if (Object.keys(fresh).length === 0) {
             try {
-                fresh = await fetchCoinGeckoDailyHistory(coinId(key));
+                fresh = await fetchCoinGeckoDailyHistory(id);
             } catch {
                 fresh = {};
             }
