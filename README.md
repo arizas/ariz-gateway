@@ -12,6 +12,8 @@ Unified Node backend for [Ariz Portfolio](https://github.com/arizas/Ariz-Portfol
 | `/api/prices/current` | Spot price batched across tokens, 60s in-memory TTL | CoinGecko free `/simple/price` |
 | `/rpc` | Authenticated NEAR JSON-RPC proxy | Forwarded to `ARIZ_GATEWAY_NODE_URL` |
 | `/api/accounting/:accountId/*` | Per-account transaction history (status, JSON, CSV, gap analysis) | [near-accounting-export](https://github.com/PeterSalomonsen/near-accounting-export) router + worker, mounted in-process |
+| `/git/:repo` | Plaintext git smart-HTTP, one bare repo per authenticated account (the wasm-git remote) | [server/git.js](./server/git.js) → `git http-backend` on the data volume |
+| `/store/me/*` | **Encrypted repository store**: client-side encrypted git packfiles — the gateway only ever sees ciphertext | [encrypted-git-storage](https://github.com/petersalomonsen/encrypted-git-storage) proxy → S3-compatible object storage (Tigris) |
 | `/` and client routes (`/accounts`, `/staking`, …) | The bundled Ariz Portfolio frontend (SPA fallback to `index.html`) | `server/public/index.html` |
 
 All **API** routes require a NEAR **NEP-413 signed message** as a bearer token, verified per request (signature, recipient, timestamp window, and Full-Access-key ownership via `view_access_key_list`). See [server/accesscontrol/middleware.js](./server/accesscontrol/middleware.js) and [server/accesscontrol/nep413.js](./server/accesscontrol/nep413.js). The static frontend routes are unauthenticated (the app must load before the user signs in).
@@ -88,6 +90,34 @@ The frontend lives in the separate [Ariz-Portfolio](https://github.com/arizas/Ar
 To ship a frontend update, build the bundle in the Ariz-Portfolio repo (`yarn dist`), copy `dist/index.html` to `server/public/index.html` here, commit and push — Fly auto-deploys. (`arizportfolio.near.page` may briefly cache the previous body.) The same fixed `body_url` is returned for every path, so the SPA router handles client routes (`/portfolio`, `/year-report`, …).
 
 The contract itself only needs redeploying if the `body_url` or web4 behavior changes.
+
+### Encrypted repository store (`/store`)
+
+Zero-knowledge backup target for user data repos (design + threat model:
+[Ariz-Portfolio docs/encrypted-storage.md](https://github.com/arizas/Ariz-Portfolio/blob/main/docs/encrypted-storage.md),
+spec: arizas/Ariz-Portfolio#76). Repos arrive as **AES-256-GCM-encrypted
+packfiles** (encrypted client-side by the [encrypted-git-storage](https://github.com/petersalomonsen/encrypted-git-storage)
+service worker or `git-remote-egit`); the gateway authenticates (NEP-413),
+scopes the caller to their own store, and streams opaque bytes to object
+storage. It holds no keys and can decrypt nothing.
+
+Configuration:
+
+- **Bucket:** `fly storage create --app arizgateway` (Tigris) sets
+  `AWS_ENDPOINT_URL_S3`, `AWS_*` credentials and `BUCKET_NAME`. For local dev,
+  `S3_ENDPOINT`/`S3_BUCKET`/`S3_ACCESS_KEY`/`S3_SECRET_KEY` point at MinIO
+  (path-style). **`/store` is disabled (with a startup log line) when no bucket
+  is configured.**
+- **`ARIZ_STORE_ID_SECRET`** — object keys are `HMAC-SHA256(secret, account)`,
+  so bucket-level observers can't map objects to NEAR accounts (plain hashes
+  would be dictionary-reversible; account names are public). Clients address
+  themselves as `/store/me/…`, rewritten after auth. **Never rotate casually:
+  changing this secret orphans every existing store.** Unset → plain account
+  ids + a startup warning (dev only).
+- **`ARIZ_STORE_ALLOWED_ORIGINS`** — CORS allow-list (default
+  `https://arizportfolio.near.page`): the app page is web4-served and web4 only
+  proxies GETs, so the service worker PUTs to this origin directly.
+- Billing-gated like `/git` when ARIZ billing is enabled.
 
 ### ARIZ usage billing (operator deduction)
 
