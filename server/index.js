@@ -217,17 +217,22 @@ if (storeBucket && storeEndpoint) {
     });
     app.use('/store', (req, res, next) => {
         // CORS preflights carry no Authorization header by spec — the proxy
-        // answers them; everything else authenticates (and is billing-gated) first.
+        // answers them; everything else authenticates first.
         if (req.method === 'OPTIONS') return storeProxy(req, res, next);
         auth(req, res, async () => {
-            if (accountGate) {
+            // Billing gates WRITES only. Reads (clone/fetch of the caller's own
+            // encrypted data) stay available to lapsed accounts: a user's backup
+            // must never be hostage to their ARIZ balance. The store is a
+            // convenience sync target — users keep custody of their data — but
+            // getting it back out is always free.
+            if (accountGate && req.method !== 'GET' && req.method !== 'HEAD') {
                 let authorized = false;
                 try { authorized = await accountGate(req.accountId); } catch { authorized = false; } // fail closed
                 if (!authorized) {
                     return res.status(402).json({
                         error: 'authorization_required',
                         accountId: req.accountId,
-                        message: 'The encrypted store requires an account that has authorized the gateway (authorize_deduction on arizcredits.near) and holds ARIZ.',
+                        message: 'Writing to the encrypted store requires an account that has authorized the gateway (authorize_deduction on arizcredits.near) and holds ARIZ. Reading your existing data remains available.',
                     });
                 }
             }
