@@ -12,8 +12,8 @@ import {
 import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
 import { createGitHandler } from './git.js';
-import { createProxy as createStoreProxy } from 'encrypted-git-storage/gateway';
 import { makeStoreRepoId } from './store-id.js';
+import { createStoreMount } from './store-mount.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createRouter as createAccountingRouter, startWorker as startAccountingWorker } from 'near-accounting-export';
 import { createDeductClient } from './arizcredits/deduct.js';
@@ -209,41 +209,14 @@ if (storeBucket && storeEndpoint) {
     if (!process.env.ARIZ_STORE_ID_SECRET) {
         console.warn('encrypted store: ARIZ_STORE_ID_SECRET not set — store ids are plain account names');
     }
-    const storeProxy = createStoreProxy({
+    app.use('/store', createStoreMount({
         s3: storeS3,
         bucket: storeBucket,
         allowedOrigins: splitList(process.env.ARIZ_STORE_ALLOWED_ORIGINS ?? 'https://arizportfolio.near.page'),
-        auth: (req) => req.storeRepoId ?? null,
-    });
-    app.use('/store', (req, res, next) => {
-        // CORS preflights carry no Authorization header by spec — the proxy
-        // answers them; everything else authenticates first.
-        if (req.method === 'OPTIONS') return storeProxy(req, res, next);
-        auth(req, res, async () => {
-            // Billing gates WRITES only. Reads (clone/fetch of the caller's own
-            // encrypted data) stay available to lapsed accounts: a user's backup
-            // must never be hostage to their ARIZ balance. The store is a
-            // convenience sync target — users keep custody of their data — but
-            // getting it back out is always free.
-            if (accountGate && req.method !== 'GET' && req.method !== 'HEAD') {
-                let authorized = false;
-                try { authorized = await accountGate(req.accountId); } catch { authorized = false; } // fail closed
-                if (!authorized) {
-                    return res.status(402).json({
-                        error: 'authorization_required',
-                        accountId: req.accountId,
-                        message: 'Writing to the encrypted store requires an account that has authorized the gateway (authorize_deduction on arizcredits.near) and holds ARIZ. Reading your existing data remains available.',
-                    });
-                }
-            }
-            req.storeRepoId = storeRepoId(req.accountId);
-            // `me` alias — clients can't compute their blinded id themselves.
-            if (req.url === '/me' || req.url.startsWith('/me/')) {
-                req.url = `/${req.storeRepoId}${req.url.slice('/me'.length)}`;
-            }
-            storeProxy(req, res, next);
-        });
-    });
+        auth,
+        accountGate,
+        storeRepoId,
+    }));
     console.log(`encrypted store: /store -> ${storeEndpoint} bucket=${storeBucket} (blinded ids: ${process.env.ARIZ_STORE_ID_SECRET ? 'on' : 'OFF'})`);
 } else {
     console.log('encrypted store: disabled (set BUCKET_NAME + AWS_ENDPOINT_URL_S3, or S3_BUCKET + S3_ENDPOINT)');
