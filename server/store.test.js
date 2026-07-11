@@ -155,3 +155,63 @@ describe('store-id blinding (makeStoreRepoId)', () => {
         equal(makeStoreRepoId(undefined)('alice.near'), 'alice.near');
     });
 });
+
+describe('billing gate: reads stay available to lapsed accounts', () => {
+    let server, base;
+
+    before(async () => {
+        const storeProxy = createStoreProxy({
+            s3: fakeS3(),
+            bucket: 'test',
+            auth: (req) => req.storeRepoId ?? null,
+        });
+        const gate = async () => false; // every account is lapsed/unfunded
+        const id = makeStoreRepoId('gate-secret');
+        const app = express();
+        // Mirrors server/index.js: writes are billing-gated, reads are not — a
+        // user's encrypted backup must never be hostage to their ARIZ balance.
+        app.use('/store', (req, res, next) => {
+            if (req.method === 'OPTIONS') return storeProxy(req, res, next);
+            const account = req.headers['x-test-account'];
+            if (!account) return res.status(401).send('failed to parse token');
+            req.accountId = account;
+            (async () => {
+                if (req.method !== 'GET' && req.method !== 'HEAD') {
+                    if (!(await gate(account))) {
+                        return res.status(402).json({ error: 'authorization_required' });
+                    }
+                }
+                req.storeRepoId = id(account);
+                if (req.url === '/me' || req.url.startsWith('/me/')) {
+                    req.url = `/${req.storeRepoId}${req.url.slice('/me'.length)}`;
+                }
+                storeProxy(req, res, next);
+            })();
+        });
+        await new Promise((r) => { server = app.listen(0, r); });
+        base = `http://localhost:${server.address().port}/store`;
+    });
+
+    after(() => server?.close());
+
+    const asAlice = { 'x-test-account': 'alice.near' };
+
+    test('lapsed account: writes are 402', async () => {
+        const res = await fetch(`${base}/me/refs`, {
+            method: 'PUT',
+            headers: { ...asAlice, 'if-none-match': '*', 'content-type': 'application/octet-stream' },
+            body: Buffer.from('x'),
+        });
+        equal(res.status, 402);
+    });
+
+    test('lapsed account: reads reach the store (clone/fetch stays possible)', async () => {
+        // 404 (not 402) proves the request passed the gate and hit the empty store.
+        equal((await fetch(`${base}/me/refs`, { headers: asAlice })).status, 404);
+        equal((await fetch(`${base}/me/packs`, { headers: asAlice })).status, 200);
+    });
+
+    test('lapsed account: maintenance deletes are gated too', async () => {
+        equal((await fetch(`${base}/me/packs/0`, { method: 'DELETE', headers: asAlice })).status, 402);
+    });
+});
