@@ -12,6 +12,8 @@ import {
 import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
 import { createGitHandler } from './git.js';
+import { createProxy as createStoreProxy } from 'encrypted-git-storage/gateway';
+import { S3Client } from '@aws-sdk/client-s3';
 import { createRouter as createAccountingRouter, startWorker as startAccountingWorker } from 'near-accounting-export';
 import { createDeductClient } from './arizcredits/deduct.js';
 import { createBillingPass } from './arizcredits/billing.js';
@@ -168,6 +170,61 @@ app.use('/git', auth, async (req, res, next) => {
     }
     gitHandler(req, res);
 });
+
+// Encrypted object store (encrypted-git-storage): whole-repo client-side
+// encrypted git packfiles in S3-compatible object storage — the gateway only
+// ever sees ciphertext. It authenticates the caller (NEP-413) and scopes them to
+// their own `<account>/*` keys (repoId = the authenticated account). Configured
+// via Tigris' AWS_* env (`fly storage create`) or S3_* (dev/MinIO); disabled
+// when no bucket is configured. CORS is required because the app page lives on
+// arizportfolio.near.page while pushes are PUTs, which web4 can't proxy — the
+// service worker calls this origin directly (preflighted PUTs included).
+// See arizas/Ariz-Portfolio#76.
+const storeBucket = process.env.BUCKET_NAME ?? process.env.S3_BUCKET;
+const storeEndpoint = process.env.AWS_ENDPOINT_URL_S3 ?? process.env.S3_ENDPOINT;
+if (storeBucket && storeEndpoint) {
+    const storeS3 = new S3Client({
+        endpoint: storeEndpoint,
+        region: process.env.AWS_REGION ?? process.env.S3_REGION ?? 'auto',
+        // Path-style for dev/MinIO (S3_ENDPOINT); Tigris/AWS use virtual-host style.
+        forcePathStyle: !!process.env.S3_ENDPOINT,
+        // With Tigris the AWS_* credentials come from the default provider chain.
+        ...(process.env.S3_ACCESS_KEY ? {
+            credentials: {
+                accessKeyId: process.env.S3_ACCESS_KEY,
+                secretAccessKey: process.env.S3_SECRET_KEY,
+            },
+        } : {}),
+    });
+    const storeProxy = createStoreProxy({
+        s3: storeS3,
+        bucket: storeBucket,
+        allowedOrigins: splitList(process.env.ARIZ_STORE_ALLOWED_ORIGINS ?? 'https://arizportfolio.near.page'),
+        auth: (req) => req.accountId ?? null,
+    });
+    app.use('/store', (req, res, next) => {
+        // CORS preflights carry no Authorization header by spec — the proxy
+        // answers them; everything else authenticates (and is billing-gated) first.
+        if (req.method === 'OPTIONS') return storeProxy(req, res, next);
+        auth(req, res, async () => {
+            if (accountGate) {
+                let authorized = false;
+                try { authorized = await accountGate(req.accountId); } catch { authorized = false; } // fail closed
+                if (!authorized) {
+                    return res.status(402).json({
+                        error: 'authorization_required',
+                        accountId: req.accountId,
+                        message: 'The encrypted store requires an account that has authorized the gateway (authorize_deduction on arizcredits.near) and holds ARIZ.',
+                    });
+                }
+            }
+            storeProxy(req, res, next);
+        });
+    });
+    console.log(`encrypted store: /store -> ${storeEndpoint} bucket=${storeBucket}`);
+} else {
+    console.log('encrypted store: disabled (set BUCKET_NAME + AWS_ENDPOINT_URL_S3, or S3_BUCKET + S3_ENDPOINT)');
+}
 
 if (frontendEnabled) {
     // Static assets first, then an SPA fallback to index.html for client-routed
