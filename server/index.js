@@ -13,6 +13,7 @@ import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
 import { createGitHandler } from './git.js';
 import { createProxy as createStoreProxy } from 'encrypted-git-storage/gateway';
+import { makeStoreRepoId } from './store-id.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createRouter as createAccountingRouter, startWorker as startAccountingWorker } from 'near-accounting-export';
 import { createDeductClient } from './arizcredits/deduct.js';
@@ -201,11 +202,18 @@ if (storeBucket && storeEndpoint) {
             },
         } : {}),
     });
+    // Blinded per-account store ids (see server/store-id.js): object keys are
+    // HMAC(secret, account), so the bucket reveals no account identities. Clients
+    // address their own store as /store/me/… — rewritten after authentication.
+    const storeRepoId = makeStoreRepoId(process.env.ARIZ_STORE_ID_SECRET);
+    if (!process.env.ARIZ_STORE_ID_SECRET) {
+        console.warn('encrypted store: ARIZ_STORE_ID_SECRET not set — store ids are plain account names');
+    }
     const storeProxy = createStoreProxy({
         s3: storeS3,
         bucket: storeBucket,
         allowedOrigins: splitList(process.env.ARIZ_STORE_ALLOWED_ORIGINS ?? 'https://arizportfolio.near.page'),
-        auth: (req) => req.accountId ?? null,
+        auth: (req) => req.storeRepoId ?? null,
     });
     app.use('/store', (req, res, next) => {
         // CORS preflights carry no Authorization header by spec — the proxy
@@ -223,10 +231,15 @@ if (storeBucket && storeEndpoint) {
                     });
                 }
             }
+            req.storeRepoId = storeRepoId(req.accountId);
+            // `me` alias — clients can't compute their blinded id themselves.
+            if (req.url === '/me' || req.url.startsWith('/me/')) {
+                req.url = `/${req.storeRepoId}${req.url.slice('/me'.length)}`;
+            }
             storeProxy(req, res, next);
         });
     });
-    console.log(`encrypted store: /store -> ${storeEndpoint} bucket=${storeBucket}`);
+    console.log(`encrypted store: /store -> ${storeEndpoint} bucket=${storeBucket} (blinded ids: ${process.env.ARIZ_STORE_ID_SECRET ? 'on' : 'OFF'})`);
 } else {
     console.log('encrypted store: disabled (set BUCKET_NAME + AWS_ENDPOINT_URL_S3, or S3_BUCKET + S3_ENDPOINT)');
 }
