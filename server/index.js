@@ -75,8 +75,13 @@ const app = express();
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.method === 'OPTIONS') {
-        res.setHeader('Access-Control-Allow-Headers', '*');
-        res.setHeader('Access-Control-Allow-Methods', '*');
+        // Reflect the requested headers rather than '*': per the Fetch spec the
+        // wildcard does NOT cover Authorization (Firefox/Safari enforce this;
+        // Chrome is lenient), and every authenticated call — /api, /git, /store —
+        // sends it. Reflecting also covers If-Match/If-None-Match for the /store
+        // refs CAS.
+        res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] ?? '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         res.end();
         return;
     }
