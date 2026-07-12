@@ -310,13 +310,17 @@ function makeStoreClient(base, repoId, extraHeaders = {}) {
 }
 
 // src/service-worker/sw.js
-var keys = /* @__PURE__ */ new Map();
+var repos = /* @__PURE__ */ new Map();
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener("message", (event) => {
   const msg = event.data;
   if (msg?.type === "egit-set-key") {
-    keys.set(msg.repoId, Uint8Array.from(msg.keyHex.match(/../g), (h) => parseInt(h, 16)));
+    repos.set(msg.repoId, {
+      key: Uint8Array.from(msg.keyHex.match(/../g), (h) => parseInt(h, 16)),
+      base: msg.storeBaseUrl ?? `${self.location.origin}/store/${msg.repoId}`,
+      headers: msg.headers ?? {}
+    });
     event.ports[0]?.postMessage({ type: "egit-key-set", repoId: msg.repoId });
   }
 });
@@ -329,9 +333,10 @@ self.addEventListener("fetch", (event) => {
 });
 async function handle(request, repoId, endpoint, url) {
   try {
-    const key = keys.get(repoId);
-    if (!key) return new Response(`no key registered for repo ${repoId}`, { status: 403 });
-    const store = makeStoreClient(`${self.location.origin}/store/${repoId}`, repoId);
+    const cfg = repos.get(repoId);
+    if (!cfg) return new Response(`no key registered for repo ${repoId}`, { status: 403 });
+    const { key } = cfg;
+    const store = makeStoreClient(cfg.base, repoId, cfg.headers);
     let out;
     if (endpoint === "info/refs") {
       out = await handleInfoRefs(url.searchParams.get("service"), store, key);
