@@ -11,7 +11,6 @@ import {
 } from './api/prices/index.js';
 import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
-import { createGitHandler } from './git.js';
 import { makeStoreRepoId } from './store-id.js';
 import { createStoreMount } from './store-mount.js';
 import { S3Client } from '@aws-sdk/client-s3';
@@ -156,25 +155,18 @@ app.use('/api/accounting/:accountId', auth, async (req, res, next) => {
     dataDir
 }));
 
-// Git smart-HTTP: a bare repo per authenticated account under <dataDir>/git,
-// for storing the user's portfolio data repo on the gateway (the wasm-git remote).
-// When billing is on, it's gated on the same authorised + funded check as
-// accounting (a paying-user feature). Mounted before the frontend so the SPA
-// fallback never swallows /git requests.
-const gitHandler = createGitHandler({ dataDir });
-app.use('/git', auth, async (req, res, next) => {
-    if (accountGate) {
-        let authorized = false;
-        try { authorized = await accountGate(req.accountId); } catch { authorized = false; } // fail closed
-        if (!authorized) {
-            return res.status(402).json({
-                error: 'authorization_required',
-                accountId: req.accountId,
-                message: 'A git repository on the gateway requires an account that has authorized the gateway (authorize_deduction on arizcredits.near) and holds ARIZ.',
-            });
-        }
-    }
-    gitHandler(req, res);
+// PLAINTEXT git hosting is RETIRED (arizas/Ariz-Portfolio#76): repositories
+// live client-side-encrypted in the /store object store; the app syncs through
+// its service worker and the CLI through git-remote-egit. The old handler
+// lazily created bare repos on push, so a plain 404 is not enough — answer 410
+// so nothing can silently recreate plaintext data on the volume. (Handler kept
+// in server/git.js for reference; last plaintext repo deleted 2026-07-12,
+// volume snapshots age out ~5 days later.)
+app.use('/git', (req, res) => {
+    res.status(410).json({
+        error: 'gone',
+        message: 'Plaintext git hosting is retired. Data syncs end-to-end encrypted via /store — in the app (Storage page), or with git-remote-egit: EGIT_KEY=<exported key> EGIT_AUTH="Bearer <token>" git clone "egit::https://arizgateway.fly.dev/store/me" portfolio',
+    });
 });
 
 // Encrypted object store (encrypted-git-storage): whole-repo client-side
