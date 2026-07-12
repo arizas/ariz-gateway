@@ -48,6 +48,9 @@ export async function createAuthMiddleware(opts) {
             req.accountId = accountId;
             next();
         } catch (err) {
+            // The reason also goes to the response body, but clients rarely
+            // surface it — log it so auth failures are diagnosable server-side.
+            console.warn(`auth failed: ${req.method} ${req.originalUrl ?? req.url} — ${err.message}`);
             res.status(err.statusCode ?? 401).send(err.message);
         }
     };
