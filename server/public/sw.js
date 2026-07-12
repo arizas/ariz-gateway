@@ -224,7 +224,12 @@ async function handleReceivePack(reqBody, store, key) {
     const [oldSha, newSha, ref] = l.split("\0")[0].split(" ");
     return { oldSha, newSha, ref };
   }).filter((c) => c.ref);
-  if (commands.length === 0) throw new Error("receive-pack: no commands");
+  if (commands.length === 0) {
+    if (packBytes.length === 0) {
+      return { body: new Uint8Array(0), contentType: "application/x-git-receive-pack-result" };
+    }
+    throw new Error("receive-pack: no commands");
+  }
   const report = (refLines) => ({
     body: pktLines(["unpack ok\n", ...refLines]),
     contentType: "application/x-git-receive-pack-result"
@@ -240,6 +245,15 @@ async function handleReceivePack(reqBody, store, key) {
       return report(commands.map((c) => stale.includes(c) ? `ng ${c.ref} fetch first
 ` : `ng ${c.ref} not attempted
 `));
+    }
+    if (packBytes.length === 0) {
+      const known = new Set(Object.values(manifest.refs));
+      const missing = commands.filter((c) => c.newSha !== ZERO_SHA && !known.has(c.newSha));
+      if (missing.length > 0) {
+        return report(commands.map((c) => missing.includes(c) ? `ng ${c.ref} push carried no packfile for new objects
+` : `ng ${c.ref} not attempted
+`));
+      }
     }
     let pack = null;
     if (packMeta) {
