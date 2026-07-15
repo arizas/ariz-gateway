@@ -114,6 +114,25 @@ app.get('/api/prices/current', auth, async (req, res) => {
     res.end(JSON.stringify(await fetchCurrent(tokens, vs), null, 1));
 });
 
+// 1Click confidential-intents API access (arizas/Ariz-Portfolio#75). The
+// frontend needs the partner x-api-key to call https://1click.chaindefuser.com
+// (auth + confidential history/balances); the key is a gateway secret, handed
+// out only to NEP-413-authenticated users. The actual account authentication
+// against 1Click happens client-side with a wallet-signed NEP-413 message —
+// this key only opens the API channel, it grants no access to other accounts'
+// confidential data.
+const oneClickApiKey = process.env.ONECLICK_API_KEY;
+const oneClickApiUrl = process.env.ONECLICK_API_URL ?? 'https://1click.chaindefuser.com';
+app.get('/api/intents/config', auth, (req, res) => {
+    if (!oneClickApiKey) {
+        return res.status(404).json({
+            error: 'not_configured',
+            message: 'Confidential intents access is not configured on this gateway (ONECLICK_API_KEY is not set).',
+        });
+    }
+    res.json({ apiUrl: oneClickApiUrl, apiKey: oneClickApiKey });
+});
+
 app.post('/rpc', auth, handleRpc);
 
 // Path-based account selection. When billing is on, each monitored account is
