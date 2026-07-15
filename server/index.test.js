@@ -35,7 +35,9 @@ describe('server', { only: false }, () => {
     let contactAccountKeyPair;
     const serverEnvironment = {
         ARIZ_GATEWAY_PORT: 15000,
-        ARIZ_GATEWAY_NEAR_NETWORK_ID: 'sandbox'
+        ARIZ_GATEWAY_NEAR_NETWORK_ID: 'sandbox',
+        ONECLICK_API_KEY: 'test-oneclick-key',
+        ONECLICK_API_URL: 'https://oneclick.example.test'
     };
 
     before(async () => {
@@ -189,6 +191,34 @@ describe('server', { only: false }, () => {
         const accountsRaw = await readFile(join(serverDataDir, 'accounts.json'), 'utf8');
         const accountsDb = JSON.parse(accountsRaw);
         ok(accountsDb.accounts[otherAccountId], `expected ${otherAccountId} in accounts.json`);
+    });
+
+    test('unauthenticated /api/intents/config is rejected', async () => {
+        const response = await fetch(`${baseUrl()}/api/intents/config`);
+        equal(response.status, 401);
+        equal(await response.text(), 'failed to parse token');
+    });
+
+    test('/api/intents/config with a token signed by a key not on the account is rejected', async () => {
+        const stranger = KeyPair.fromRandom('ed25519');
+        const token = createNep413Token(stranger, contract.accountId, contract.accountId);
+        const response = await fetch(`${baseUrl()}/api/intents/config`, {
+            headers: { 'authorization': `Bearer ${token}` }
+        });
+
+        equal(response.status, 401);
+        equal(await response.text(), 'public key not on account');
+    });
+
+    test('authenticated /api/intents/config returns the 1Click api key and url', async () => {
+        const response = await fetch(`${baseUrl()}/api/intents/config`, {
+            headers: { 'authorization': `Bearer ${authToken()}` }
+        });
+
+        equal(response.status, 200);
+        const body = await response.json();
+        equal(body.apiKey, 'test-oneclick-key');
+        equal(body.apiUrl, 'https://oneclick.example.test');
     });
 
     test('/rpc forwards authenticated request to upstream node', async () => {
