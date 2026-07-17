@@ -145,3 +145,21 @@ The operator is `arizcredits.near` itself (the contract's `deduct` guards `prede
 - [contract/](./contract) — `arizportfolio.near` smart contract: web4 frontend host + access-token registry
 - [fly.toml](./fly.toml) — Fly.io app config + volume declaration
 - [UNIFIED_BACKEND_PLAN.md](./UNIFIED_BACKEND_PLAN.md) — design history and slice tracking
+
+## License
+
+Ariz gateway — server for the Ariz Portfolio app.
+Copyright (C) 2024–2026 [Ariz AS](https://virksomhet.brreg.no/nb/oppslag/enheter/930491780) (org.nr. 930 491 780, Norway).
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the [GNU Affero General Public License](./LICENSE)
+for more details.
+
+If you run a modified version of this software as a network service, the AGPL
+requires you to offer the modified source to its users.
