@@ -84,27 +84,42 @@ jobs:
 
       # quickjs-rust-near's build.rs expects the toolchain at
       # `<repo>/emsdk/upstream/...`, so install emsdk in-tree rather than via
-      # the setup-emsdk action's default location.
-      - name: Install Emscripten 3.1.74 (in-tree)
+      # the setup-emsdk action's default location. The version comes from
+      # quickjslib/build.sh, which is what the wasm is actually built with.
+      - name: Install Emscripten (in-tree)
         working-directory: quickjs-rust-near
         run: |
+          version=$(sed -n 's/^EMSDK_VERSION=//p' quickjslib/build.sh)
+          echo "Emscripten $version"
           git clone https://github.com/emscripten-core/emsdk.git emsdk
           cd emsdk
-          git checkout 3.1.74
-          ./emsdk install 3.1.74
-          ./emsdk activate 3.1.74
+          git checkout "$version"
+          ./emsdk install "$version"
+          ./emsdk activate "$version"
 
-      - name: Install binaryen 116
+      # fungibletoken/build.sh runs wasm-opt with --llvm-memory-copy-fill-lowering,
+      # which only exists from binaryen ~131 (116 has --signext-lowering but not
+      # this one). quickjs-rust-near pins 131 in .devcontainer/install-dependencies.sh.
+      - name: Install binaryen 131
         run: |
           curl -fsSL -o /tmp/binaryen.tar.gz \
-            https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz
+            https://github.com/WebAssembly/binaryen/releases/download/version_131/binaryen-version_131-x86_64-linux.tar.gz
           tar -xzf /tmp/binaryen.tar.gz -C /tmp
-          echo "/tmp/binaryen-version_116/bin" >> "$GITHUB_PATH"
+          echo "/tmp/binaryen-version_131/bin" >> "$GITHUB_PATH"
 
+      # build.rs links libquickjs.a from `<repo>/quickjs-<version>`, and
+      # quickjslib/build.sh only builds it there when that directory already
+      # exists — otherwise it downloads QuickJS into quickjslib/, where the linker
+      # does not look, and the build fails with `unable to find library -lquickjs`.
+      # Take the version from build.sh instead of hardcoding it: this job checks
+      # out quickjs-rust-near at `main`, and an upstream bump (2024-01-13 ->
+      # 2026-06-04 in quickjs-rust-near#54) is exactly what broke it before.
       - name: Fetch QuickJS source
         working-directory: quickjs-rust-near
         run: |
-          curl -fsSL -o quickjs.tar.xz https://bellard.org/quickjs/quickjs-2024-01-13.tar.xz
+          version=$(sed -n 's/^QUICKJS_VERSION=//p' quickjslib/build.sh)
+          echo "QuickJS $version"
+          curl -fsSL -o quickjs.tar.xz "https://bellard.org/quickjs/quickjs-$version.tar.xz"
           tar -xf quickjs.tar.xz
           rm quickjs.tar.xz
 
