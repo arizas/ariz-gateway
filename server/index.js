@@ -13,6 +13,7 @@ import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
 import { makeStoreRepoId } from './store-id.js';
 import { createStoreMount } from './store-mount.js';
+import { createCorsMiddleware } from './cors.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createRouter as createAccountingRouter, startWorker as startAccountingWorker } from 'near-accounting-export';
 import { createDeductClient } from './arizcredits/deduct.js';
@@ -72,21 +73,8 @@ function splitList(value) {
 
 const app = express();
 
-app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    if (req.method === 'OPTIONS') {
-        // Reflect the requested headers rather than '*': per the Fetch spec the
-        // wildcard does NOT cover Authorization (Firefox/Safari enforce this;
-        // Chrome is lenient), and every authenticated call — /api, /git, /store —
-        // sends it. Reflecting also covers If-Match/If-None-Match for the /store
-        // refs CAS.
-        res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] ?? '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.end();
-        return;
-    }
-    next();
-});
+// /store is bypassed because it does its own CORS — see server/cors.js.
+app.use(createCorsMiddleware({ bypass: ['/store'] }));
 
 app.get('/api/prices/currencylist', auth, async (req, res) => {
     res.setHeader('content-type', 'application/json');

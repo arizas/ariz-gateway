@@ -69,14 +69,13 @@ async function startMount({ accountGate = null } = {}) {
     return { s3, storeRepoId, server, base: `http://localhost:${server.address().port}/store` };
 }
 
-const DEV_ORIGIN = 'http://localhost:8081';
+const SECOND_ORIGIN = 'https://arizgateway.fly.dev';
 
 const asAlice = { 'x-test-account': 'alice.near' };
 
-// fly.toml sets ARIZ_STORE_ALLOWED_ORIGINS to the deployed origin plus
-// http://localhost:8081 (`yarn serve` in Ariz-Portfolio), so the /store mount has
-// to honour every entry in the list, not just the first. The store is the one
-// mount that cannot use a wildcard, because it is credentialed.
+// ARIZ_STORE_ALLOWED_ORIGINS is a list, so the mount has to honour every entry
+// in it, not just the first. Whether the list is consulted at all depends on the
+// mount not being pre-empted by the blanket CORS middleware — see cors.test.js.
 describe('encrypted store mount: multiple allowed origins', () => {
     let server, base;
 
@@ -84,7 +83,7 @@ describe('encrypted store mount: multiple allowed origins', () => {
         const s3 = fakeS3();
         const app = express();
         app.use('/store', createStoreMount({
-            s3, bucket: 'test', allowedOrigins: [ORIGIN, DEV_ORIGIN],
+            s3, bucket: 'test', allowedOrigins: [ORIGIN, SECOND_ORIGIN],
             auth: stubAuth, accountGate: null, storeRepoId: makeStoreRepoId('test-blinding-secret'),
         }));
         server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
@@ -107,9 +106,9 @@ describe('encrypted store mount: multiple allowed origins', () => {
         equal(res.headers.get('access-control-allow-origin'), ORIGIN);
     });
 
-    it('echoes the localhost dev origin', async () => {
-        const res = await preflight(DEV_ORIGIN);
-        equal(res.headers.get('access-control-allow-origin'), DEV_ORIGIN);
+    it('echoes the second origin on the list', async () => {
+        const res = await preflight(SECOND_ORIGIN);
+        equal(res.headers.get('access-control-allow-origin'), SECOND_ORIGIN);
     });
 
     it('does not echo an origin that is not on the list', async () => {
@@ -118,7 +117,7 @@ describe('encrypted store mount: multiple allowed origins', () => {
     });
 
     it('does not answer the wildcard, which cannot carry credentials', async () => {
-        const res = await preflight(DEV_ORIGIN);
+        const res = await preflight(SECOND_ORIGIN);
         notEqual(res.headers.get('access-control-allow-origin'), '*');
     });
 });
