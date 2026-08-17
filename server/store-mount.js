@@ -18,6 +18,22 @@ import { createProxy as createStoreProxy } from 'encrypted-git-storage/gateway';
  *    fingerprint: access keys are public on-chain and pk-named blobs would
  *    de-blind the store). Immutable create-only; enrollment races resolve via 412.
  */
+
+// The proxy sets the store's CORS headers itself, but only once it runs — and it
+// runs after auth. Anything answered earlier (401 from auth, 402 from the
+// billing gate) would therefore carry no CORS headers at all, and a browser
+// would surface it as an opaque network failure rather than a status the client
+// can act on. Set the same headers the proxy sets, up front, for allowed
+// origins; the proxy setting them again later is a no-op.
+function setStoreCorsHeaders(req, res, allowed) {
+    const origin = req.headers.origin;
+    if (!origin) return;
+    if (!allowed.has(origin) && !allowed.has('*')) return;
+    res.setHeader('Access-Control-Allow-Origin', allowed.has('*') ? '*' : origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Expose-Headers', 'ETag');
+}
+
 export function createStoreMount({ s3, bucket, allowedOrigins, auth, accountGate, storeRepoId }) {
     const storeProxy = createStoreProxy({
         s3,
@@ -26,8 +42,11 @@ export function createStoreMount({ s3, bucket, allowedOrigins, auth, accountGate
         auth: (req) => req.storeRepoId ?? null,
     });
 
+    const allowed = new Set(allowedOrigins ?? []);
+
     return function storeMount(req, res, next) {
         if (req.method === 'OPTIONS') return storeProxy(req, res, next);
+        setStoreCorsHeaders(req, res, allowed);
         auth(req, res, async () => {
             try {
                 if (accountGate && req.method !== 'GET' && req.method !== 'HEAD') {

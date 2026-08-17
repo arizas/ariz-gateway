@@ -6,14 +6,6 @@ primary_region = "iad"
 [env]
   ARIZ_GATEWAY_PORT = "8080"
   ARIZ_DATA_DIR = "/data"
-  # The /store CORS allow-list. localhost:8081 is `yarn serve` in Ariz-Portfolio,
-  # so the frontend can be run against this gateway's real data during
-  # development — the store is the one mount that cannot use the wildcard,
-  # because it is credentialed. An Origin header cannot be forged by page script,
-  # so a remote site cannot use this entry; a process able to bind localhost:8081
-  # can, and would still need a NEP-413 wallet signature to authenticate and
-  # another to unwrap the repo key. Remove the entry to close it again.
-  ARIZ_STORE_ALLOWED_ORIGINS = "https://arizportfolio.near.page,http://localhost:8081"
 
 [http_service]
   internal_port = 8080
