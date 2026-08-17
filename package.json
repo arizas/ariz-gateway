@@ -20,5 +20,9 @@
   },
   "devDependencies": {
     "near-workspaces": "^3.5.0"
+  },
+  "overrides": {
+    "bn.js": "^5.2.5",
+    "tar": "^7.5.22"
   }
 }
