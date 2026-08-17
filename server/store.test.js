@@ -1,4 +1,4 @@
-import { test, before, after, describe } from 'node:test';
+import { test, it, before, after, describe } from 'node:test';
 import { equal, deepEqual, ok, notEqual, match } from 'node:assert/strict';
 import express from 'express';
 import { createStoreMount } from './store-mount.js';
@@ -69,7 +69,59 @@ async function startMount({ accountGate = null } = {}) {
     return { s3, storeRepoId, server, base: `http://localhost:${server.address().port}/store` };
 }
 
+const DEV_ORIGIN = 'http://localhost:8081';
+
 const asAlice = { 'x-test-account': 'alice.near' };
+
+// fly.toml sets ARIZ_STORE_ALLOWED_ORIGINS to the deployed origin plus
+// http://localhost:8081 (`yarn serve` in Ariz-Portfolio), so the /store mount has
+// to honour every entry in the list, not just the first. The store is the one
+// mount that cannot use a wildcard, because it is credentialed.
+describe('encrypted store mount: multiple allowed origins', () => {
+    let server, base;
+
+    before(async () => {
+        const s3 = fakeS3();
+        const app = express();
+        app.use('/store', createStoreMount({
+            s3, bucket: 'test', allowedOrigins: [ORIGIN, DEV_ORIGIN],
+            auth: stubAuth, accountGate: null, storeRepoId: makeStoreRepoId('test-blinding-secret'),
+        }));
+        server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
+        base = `http://localhost:${server.address().port}/store`;
+    });
+
+    after(() => server?.close());
+
+    const preflight = (origin) => fetch(`${base}/me/refs`, {
+        method: 'OPTIONS',
+        headers: {
+            Origin: origin,
+            'Access-Control-Request-Method': 'PUT',
+            'Access-Control-Request-Headers': 'authorization,content-type,if-match',
+        },
+    });
+
+    it('echoes the deployed origin', async () => {
+        const res = await preflight(ORIGIN);
+        equal(res.headers.get('access-control-allow-origin'), ORIGIN);
+    });
+
+    it('echoes the localhost dev origin', async () => {
+        const res = await preflight(DEV_ORIGIN);
+        equal(res.headers.get('access-control-allow-origin'), DEV_ORIGIN);
+    });
+
+    it('does not echo an origin that is not on the list', async () => {
+        const res = await preflight('https://evil.example');
+        notEqual(res.headers.get('access-control-allow-origin'), 'https://evil.example');
+    });
+
+    it('does not answer the wildcard, which cannot carry credentials', async () => {
+        const res = await preflight(DEV_ORIGIN);
+        notEqual(res.headers.get('access-control-allow-origin'), '*');
+    });
+});
 
 describe('encrypted store mount (/store)', () => {
     let s3, storeRepoId, server, base, aliceId;
