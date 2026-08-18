@@ -304,3 +304,93 @@ describe('prices', () => {
         deepEqual([...noPrice].sort(), ['ariz', 'scamtoken']);
     });
 });
+
+// The gateway is meant to be the archive: a token's deep history is pulled once
+// and kept, and the hourly update only advances it. Before this, loadTokenPrices
+// trusted any non-empty cache, so a series that had been seeded shallow answered
+// shallow for good — one real store lost 4 252 days of BTC that way, because the
+// client overwrote its own copy with the gateway's short answer.
+describe('deep history is backfilled once and then kept', () => {
+    let dataDir;
+    let originalFetch;
+    let llamaCalls;
+
+    const DEEP = { '2014-07-18': 500, '2019-01-01': 4000, '2024-01-01': 42000 };
+    const SHALLOW = { '2026-06-21': 60000, '2026-06-22': 61000 };
+
+    beforeEach(async () => {
+        dataDir = await mkdtemp(join(tmpdir(), 'prices-backfill-'));
+        process.env.ARIZ_DATA_DIR = dataDir;
+        originalFetch = globalThis.fetch;
+        llamaCalls = 0;
+        globalThis.fetch = async (url) => {
+            const href = String(url);
+            if (href.includes('coins.llama.fi')) {
+                llamaCalls++;
+                // One window's worth; fetchFullDailyHistory stops when a window
+                // adds nothing new.
+                return llamaCalls === 1
+                    ? llamaChartResponse('bitcoin', DEEP)
+                    : llamaChartResponse('bitcoin', {});
+            }
+            if (href.includes('frankfurter')) return jsonResponse({ rates: {} });
+            return jsonResponse({});
+        };
+        await mkdir(join(dataDir, 'prices'), { recursive: true });
+    });
+
+    afterEach(async () => {
+        globalThis.fetch = originalFetch;
+        await rm(dataDir, { recursive: true, force: true });
+    });
+
+    test('a shallow cache is deepened rather than trusted', async () => {
+        await writeFile(join(dataDir, 'prices', 'btc.json'), JSON.stringify(SHALLOW));
+
+        const history = await fetchPriceHistory('bitcoin', 'USD');
+
+        // The days already held survive, and the deep ones are added.
+        for (const [date, price] of Object.entries(SHALLOW)) equal(history[date], price);
+        for (const [date, price] of Object.entries(DEEP)) equal(history[date], price);
+        ok(llamaCalls > 0, 'expected a backfill fetch');
+
+        const onDisk = JSON.parse(await readFile(join(dataDir, 'prices', 'btc.json'), 'utf8'));
+        equal(Object.keys(onDisk).length, Object.keys(DEEP).length + Object.keys(SHALLOW).length);
+    });
+
+    test('the backfill happens once, not on every load', async () => {
+        await writeFile(join(dataDir, 'prices', 'btc.json'), JSON.stringify(SHALLOW));
+        await fetchPriceHistory('bitcoin', 'USD');
+        const afterFirst = llamaCalls;
+        ok(afterFirst > 0);
+
+        // A fresh process would re-read from disk; the marker is what stops it.
+        const { readPriceMeta, hasFullHistory } = await import('./prices/store.js');
+        ok(await hasFullHistory('btc'), 'expected btc to be marked');
+        ok((await readPriceMeta()).btc.fullHistoryAt, 'expected a date on the marker');
+    });
+
+    test('the marker file is not mistaken for a cached token', async () => {
+        await writeFile(join(dataDir, 'prices', 'btc.json'), JSON.stringify(SHALLOW));
+        await fetchPriceHistory('bitcoin', 'USD');
+
+        const { listCachedTokens } = await import('./prices/store.js');
+        const tokens = await listCachedTokens();
+        ok(!tokens.some(t => t.startsWith('.')), `the sidecar leaked into the token listing: ${tokens}`);
+        ok(tokens.includes('btc'), 'real tokens are still listed');
+
+        // And the hourly update must not try to advance it either.
+        await runEodUpdate({ now: new Date('2026-08-18T00:00:00Z') });
+        const onDisk = JSON.parse(await readFile(join(dataDir, 'prices', 'btc.json'), 'utf8'));
+        ok(onDisk['2014-07-18'] != null, 'deep history survived the EOD pass');
+    });
+
+    test('an empty cache is still marked, so unlisted tokens are not refetched forever', async () => {
+        globalThis.fetch = async (url) => String(url).includes('coins.llama.fi')
+            ? llamaChartResponse('bitcoin', {})
+            : jsonResponse({});
+        await fetchPriceHistory('bitcoin', 'USD');
+        const { hasFullHistory } = await import('./prices/store.js');
+        ok(await hasFullHistory('btc'));
+    });
+});

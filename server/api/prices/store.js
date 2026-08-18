@@ -51,7 +51,7 @@ function decodeKey(name) {
 async function listJsonFiles(dir) {
     try {
         return (await readdir(dir))
-            .filter(f => f.endsWith('.json'))
+            .filter(f => f.endsWith('.json') && !f.startsWith('.'))
             .map(f => decodeKey(f.slice(0, -'.json'.length)));
     } catch (err) {
         if (err.code === 'ENOENT') return [];
@@ -83,4 +83,42 @@ export async function listCachedTokens() {
 
 export async function listCachedCurrencies() {
     return listJsonFiles(forexDir());
+}
+
+// Which tokens have had their full history pulled from the provider. Kept beside
+// the price files rather than inside them: every consumer iterates a price map as
+// { date: price }, so a marker key in there would have to be filtered in each of
+// them, and the one that got missed would silently corrupt a series.
+//
+// The point of this file is that the gateway is the archive. A token's deep
+// history is fetched once, ever; after that the store is authoritative and the
+// hourly update only advances it. Without it, loadTokenPrices returns whatever
+// is cached the moment it is non-empty, so a series that was seeded shallow
+// stays shallow for good.
+function metaPath() {
+    return join(pricesDir(), '.history-meta.json');
+}
+
+export async function readPriceMeta() {
+    return (await readJson(metaPath())) ?? {};
+}
+
+// Serialised: entries for different tokens land in one file, and a plain
+// read-modify-write would drop whichever concurrent update lost the race.
+let metaQueue = Promise.resolve();
+export function markFullHistoryFetched(symbol, at = new Date().toISOString().slice(0, 10)) {
+    metaQueue = metaQueue.then(async () => {
+        const meta = await readPriceMeta();
+        meta[fileKey(symbol)] = { fullHistoryAt: at };
+        const dir = pricesDir();
+        await writeJsonAtomic(metaPath(), dir, meta);
+    }).catch(err => {
+        console.error('failed to record full-history marker', err);
+    });
+    return metaQueue;
+}
+
+export async function hasFullHistory(symbol) {
+    const meta = await readPriceMeta();
+    return !!meta[fileKey(symbol)]?.fullHistoryAt;
 }
