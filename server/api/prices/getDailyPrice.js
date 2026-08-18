@@ -1,4 +1,4 @@
-import { readForex, readTokenPrices, writeForex, writeTokenPrices } from './store.js';
+import { readForex, readTokenPrices, writeForex, writeTokenPrices, hasFullHistory, markFullHistoryFetched } from './store.js';
 import { fetchFullDailyHistory as fetchDefiLlamaFullDailyHistory } from './providers/defillama.js';
 import { fetchDailyHistory as fetchCoinGeckoDailyHistory } from './providers/coingecko.js';
 import { fetchHistoryRange as fetchForexHistoryRange } from './providers/frankfurter.js';
@@ -20,29 +20,57 @@ async function loadTokenPrices(symbol) {
     const key = symbol.toLowerCase();
     return once(tokenLoads, key, async () => {
         const cached = await readTokenPrices(key);
-        if (cached && Object.keys(cached).length > 0) return cached;
+        if (cached && Object.keys(cached).length > 0) {
+            // A non-empty cache used to be trusted outright, which meant a series
+            // seeded shallow stayed shallow for good — the gateway would keep
+            // answering with a handful of days for a token the provider has years
+            // of. Backfill once, then never again: the marker is what stops this
+            // becoming a repeated fetch for tokens that are genuinely young.
+            if (await hasFullHistory(key)) return cached;
+            const deep = await fetchDeepHistory(key);
+            // Cached entries win. They came from the same providers earlier, and
+            // keeping them makes the backfill idempotent.
+            const merged = { ...deep, ...cached };
+            if (Object.keys(merged).length > Object.keys(cached).length) {
+                await writeTokenPrices(key, merged);
+            }
+            await markFullHistoryFetched(key);
+            return merged;
+        }
 
         // DeFiLlama (no API key, multi-year history via pagination) is the primary
         // source; CoinGecko market_chart (365 days) is the fallback for anything it
         // doesn't have. Both are addressed by CoinGecko id. If neither has it, cache
         // empty (no price) rather than erroring the whole report.
-        const id = coinId(key);
-        let fresh = {};
+        const fresh = await fetchDeepHistory(key);
+        await writeTokenPrices(key, fresh);
+        // Marked even when empty: an unlisted token has no history to find, and
+        // retrying it on every load is what rate-limits the providers.
+        await markFullHistoryFetched(key);
+        return fresh;
+    });
+}
+
+// DeFiLlama (no API key, multi-year history via pagination) is the primary
+// source; CoinGecko market_chart (365 days) is the fallback for anything it
+// doesn't have. Both are addressed by CoinGecko id. If neither has it, the
+// result is empty (no price) rather than an error that fails the whole report.
+async function fetchDeepHistory(key) {
+    const id = coinId(key);
+    let fresh = {};
+    try {
+        fresh = await fetchDefiLlamaFullDailyHistory(id);
+    } catch {
+        fresh = {};
+    }
+    if (Object.keys(fresh).length === 0) {
         try {
-            fresh = await fetchDefiLlamaFullDailyHistory(id);
+            fresh = await fetchCoinGeckoDailyHistory(id);
         } catch {
             fresh = {};
         }
-        if (Object.keys(fresh).length === 0) {
-            try {
-                fresh = await fetchCoinGeckoDailyHistory(id);
-            } catch {
-                fresh = {};
-            }
-        }
-        await writeTokenPrices(key, fresh);
-        return fresh;
-    });
+    }
+    return fresh;
 }
 
 async function loadForex(currency) {
