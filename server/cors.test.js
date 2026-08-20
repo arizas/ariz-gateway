@@ -7,6 +7,10 @@ import { createStoreMount } from './store-mount.js';
 import { makeStoreRepoId } from './store-id.js';
 
 const STORE_ORIGIN = 'https://arizportfolio.near.page';
+// fly.toml also allows the development origin. Now that /store answers its own
+// CORS, that entry is what the encrypted store reaches on localhost — a test
+// exists here because removing it once already broke development silently.
+const DEV_ORIGIN = 'http://localhost:8081';
 
 // Minimal S3 double: the store mount only needs GET/PUT to not explode here,
 // since these tests never get past the preflight or the 401.
@@ -44,7 +48,7 @@ describe('CORS composition: blanket middleware + /store mount', () => {
         app.use('/store', createStoreMount({
             s3: fakeS3(),
             bucket: 'test',
-            allowedOrigins: [STORE_ORIGIN],
+            allowedOrigins: [STORE_ORIGIN, DEV_ORIGIN],
             auth: (req, res, next) => {
                 if (!req.headers['x-test-account']) return res.status(401).send('unauthenticated');
                 req.accountId = req.headers['x-test-account'];
@@ -118,6 +122,12 @@ describe('CORS composition: blanket middleware + /store mount', () => {
     it('still reaches auth on /store — the bypass is about headers, not access', async () => {
         const res = await fetch(`${base}/store/me/refs`, { headers: { Origin: STORE_ORIGIN } });
         equal(res.status, 401);
+    });
+
+    it('lets the development origin through, as fly.toml configures', async () => {
+        const res = await preflight('/store/me/keys/abc', DEV_ORIGIN);
+        equal(res.status, 204);
+        equal(res.headers.get('access-control-allow-origin'), DEV_ORIGIN);
     });
 
     it('a bypassed preflight is never answered with the wildcard', async () => {

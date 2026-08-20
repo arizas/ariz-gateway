@@ -6,6 +6,19 @@ primary_region = "iad"
 [env]
   ARIZ_GATEWAY_PORT = "8080"
   ARIZ_DATA_DIR = "/data"
+  # The /store CORS allow-list. Until #49 this had no effect — the blanket CORS
+  # middleware answered every preflight with the wildcard before the router
+  # reached /store — so #47 added localhost here and changed nothing, and #49
+  # removed it again as dead config while making the list live. Those two
+  # cancelled into a regression: the encrypted store had been reachable from a
+  # development origin by accident, and stopped being reachable at all.
+  #
+  # localhost:8081 is `yarn serve`, and the browser inside the devcontainer as
+  # well. An Origin header cannot be forged by page script, so a remote site
+  # cannot use this entry; a local process that binds the port can, and would
+  # still need a NEP-413 signature to authenticate and another to unwrap the
+  # repo key. Remove the entry to close it again.
+  ARIZ_STORE_ALLOWED_ORIGINS = "https://arizportfolio.near.page,http://localhost:8081"
 
 [http_service]
   internal_port = 8080
