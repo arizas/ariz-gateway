@@ -16,7 +16,17 @@ import crypto from 'node:crypto';
 // window — the same approach as the previous `iat`-based scheme.
 
 export const NEP413_TAG = 2147484061; // 2^31 + 413
-export const DEFAULT_MAX_AGE_MS = 60 * 60 * 1000; // 1h signed-message validity
+// How long a signed message stays valid.
+//
+// This is the replay window: anyone holding the token can act as the account
+// until it lapses. It is also how often the browser has to ask the wallet for a
+// new signature, which puts a QR code on screen — and an app doing background
+// work while that waits looks like it has hung, because nothing on the page
+// says what it is waiting for.
+//
+// An hour made that happen several times a day. A day trades a wider replay
+// window for a signature the user is actually present for.
+export const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h signed-message validity
 
 function u32le(n) {
     const b = new Uint8Array(4);

@@ -57,6 +57,25 @@ describe('NEP-413 verification', () => {
         );
     });
 
+    // The window is the replay window, and also how often the browser has to put
+    // a wallet QR code on screen. At an hour that happened several times a day,
+    // and an app doing background work while it waits looks like it has hung.
+    test('a signed message stays valid for a day', async () => {
+        const kp = KeyPair.fromRandom('ed25519');
+        const token = makeToken(kp, { issuedAt: Date.now() - 23 * 60 * 60 * 1000 });
+        const res = await verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp) });
+        deepEqual(res, { accountId: ACCOUNT });
+    });
+
+    test('and no longer than that', async () => {
+        const kp = KeyPair.fromRandom('ed25519');
+        const token = makeToken(kp, { issuedAt: Date.now() - 25 * 60 * 60 * 1000 });
+        await rejects(
+            verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp) }),
+            /token expired/,
+        );
+    });
+
     test('future-dated token is rejected', async () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp, { issuedAt: Date.now() + 10 * 60 * 1000 });
