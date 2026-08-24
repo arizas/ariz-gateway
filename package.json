@@ -13,7 +13,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",
     "cgi": "^0.3.1",
-    "encrypted-git-storage": "^0.1.4",
+    "encrypted-git-storage": "^0.1.7",
     "express": "^4.21.2",
     "near-accounting-export": "github:PeterSalomonsen/near-accounting-export#6d7eefb051f184c1ed0deacb3bfc6d90432b1d68",
     "near-api-js": "^2.1.4"
