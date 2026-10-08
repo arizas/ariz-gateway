@@ -3,6 +3,7 @@ import { fetchRecentDailyClose as fetchDefiLlamaRecentDailyClose } from './provi
 import { fetchHistoryRange as fetchForexHistoryRange } from './providers/frankfurter.js';
 import { getPriceHistory } from './getDailyPrice.js';
 import { coinId, toSymbol } from './token-map.js';
+import { RATE_TOKENS, isRateToken, loadRateHistory, rateTokenIds, readRate } from './rate-tokens.js';
 import {
     listCachedCurrencies,
     listCachedTokens,
@@ -67,9 +68,30 @@ export async function fetchNoPriceTokens() {
     });
 }
 
+/** Contract ids the gateway prices by their own rate rather than a ticker. */
+export function fetchRateTokens() {
+    return rateTokenIds();
+}
+
 export async function fetchCurrent(tokens, vsCurrencies) {
     if (!tokens || tokens.length === 0) return {};
     const vs = vsCurrencies && vsCurrencies.length > 0 ? vsCurrencies : ['usd'];
+    // A rate token's spot is its base's spot times the rate at the chain head.
+    const byRate = tokens.filter(isRateToken);
+    if (byRate.length > 0) {
+        const rest = tokens.filter(t => !isRateToken(t));
+        const bases = [...new Set(byRate.map(t => RATE_TOKENS[String(t).toLowerCase()].base))];
+        const spot = await fetchCurrent([...rest, ...bases.filter(b => !rest.includes(b))], vs);
+        const out = {};
+        for (const t of rest) out[t] = spot[t] ?? {};
+        for (const t of byRate) {
+            const contract = String(t).toLowerCase();
+            const rate = await spotCached(`rate:${contract}`, () => readRate(contract, 'final'));
+            const base = spot[RATE_TOKENS[contract].base] ?? {};
+            out[t] = Object.fromEntries(Object.entries(base).map(([cur, p]) => [cur, p == null ? null : p * rate]));
+        }
+        return out;
+    }
     const ids = tokens.map(t => coinId(toSymbol(t)));
     const sortedIds = [...ids].sort();
     const sortedVs = [...vs.map(v => v.toLowerCase())].sort();
@@ -122,6 +144,16 @@ export async function runEodUpdate({ now = new Date() } = {}) {
             if (changed) await writeTokenPrices(symbol, data);
         } catch (err) {
             console.error(`EOD update failed for token ${symbol}:`, err);
+        }
+    }
+
+    // Each rate-priced contract: the days up to yesterday it has not been asked
+    // for yet, one view call each.
+    for (const contract of rateTokenIds()) {
+        try {
+            await loadRateHistory(contract, yesterday);
+        } catch (err) {
+            console.error(`EOD update failed for rate token ${contract}:`, err);
         }
     }
 

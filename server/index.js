@@ -7,7 +7,8 @@ import {
     fetchCurrent,
     fetchNoPriceTokens,
     fetchPriceHistory,
-    startEodScheduler
+    startEodScheduler,
+    fetchRateTokens
 } from './api/prices/index.js';
 import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
@@ -88,6 +89,11 @@ app.get('/api/prices/history', auth, async (req, res) => {
         null,
         1
     ));
+});
+
+app.get('/api/prices/ratetokens', auth, async (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(fetchRateTokens(), null, 1));
 });
 
 app.get('/api/prices/nopricetokens', auth, async (req, res) => {
