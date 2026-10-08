@@ -9,6 +9,7 @@ import {
     fetchCurrent,
     fetchNoPriceTokens,
     fetchPriceHistory,
+    fetchRateTokens,
     runEodUpdate
 } from './prices/index.js';
 
@@ -392,5 +393,102 @@ describe('deep history is backfilled once and then kept', () => {
         await fetchPriceHistory('bitcoin', 'USD');
         const { hasFullHistory } = await import('./prices/store.js');
         ok(await hasFullHistory('btc'));
+    });
+});
+
+// A token priced by its own contract rather than a ticker. lst-pool.near calls
+// itself stNEAR, exactly like Meta Pool's token, and CoinGecko's "staked-near"
+// is Meta Pool's — priced by ticker, 982 tokens bought at 1.02 NEAR each read
+// as worth 1.49. The contract's rate is the price.
+describe('contract-rate pricing', () => {
+    let dataDir;
+    let originalFetch;
+    beforeEach(async () => {
+        dataDir = await mkdtemp(join(tmpdir(), 'prices-rate-'));
+        process.env.ARIZ_DATA_DIR = dataDir;
+        originalFetch = globalThis.fetch;
+        await mkdir(join(dataDir, 'prices'), { recursive: true });
+        await mkdir(join(dataDir, 'forex'), { recursive: true });
+        await writeFile(join(dataDir, 'prices', 'near.json'), JSON.stringify({ '2026-09-27': 4.7, '2026-09-28': 5.0, '2026-09-29': 5.2 }));
+        await writeFile(join(dataDir, 'forex', 'nok.json'), JSON.stringify({ '2026-09-01': 10 }));
+        await writeFile(join(dataDir, 'prices', '.meta.json'), JSON.stringify({ fullHistory: { near: '2026-10-01' } }));
+    });
+    afterEach(async () => {
+        globalThis.fetch = originalFetch;
+        await rm(dataDir, { recursive: true, force: true });
+    });
+
+    // A chain whose blocks are exactly one second apart from 2026-08-31, with a
+    // head well past the test days, and a rate of 1.01 + 0.0001 per day since
+    // 2026-09-27; nothing before that day.
+    const GENESIS = Date.parse('2026-08-31T00:00:00Z');
+    const HEAD = 3_000_000;
+    const tsOf = h => BigInt(GENESIS + h * 1000) * 1_000_000n;
+    const dayOf = h => new Date(GENESIS + h * 1000).toISOString().slice(0, 10);
+    const rateOn = date => (date < '2026-09-27' ? null : 1.01 + 0.0001 * Math.round((Date.parse(date) - Date.parse('2026-09-27')) / 86_400_000));
+    function rpcMock(calls) {
+        return async (url, init) => {
+            const body = JSON.parse(init.body);
+            calls.push(body.method === 'query' ? `query@${body.params.block_id ?? body.params.finality}` : `block@${body.params.block_id ?? body.params.finality}`);
+            if (body.method === 'block') {
+                const h = body.params.finality ? HEAD : body.params.block_id;
+                return jsonResponse({ result: { header: { height: h, timestamp: tsOf(h).toString() } } });
+            }
+            if (body.method === 'query') {
+                const date = body.params.finality ? dayOf(HEAD) : dayOf(body.params.block_id);
+                const rate = rateOn(date);
+                if (rate == null) return jsonResponse({ error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT' } } });
+                const den = 10n ** 24n;
+                const num = BigInt(Math.round(rate * 1e12)) * den / 10n ** 12n;
+                return jsonResponse({ result: { result: [...Buffer.from(JSON.stringify({ numerator: num.toString(), denominator: den.toString() }))] } });
+            }
+            throw new Error(`unexpected rpc ${body.method}`);
+        };
+    }
+
+    test('history is the base price times the rate read at the last block of each day, and nothing before the token existed', async () => {
+        const calls = [];
+        globalThis.fetch = rpcMock(calls);
+        const out = await fetchPriceHistory('lst-pool.near', 'NOK', '2026-09-29');
+        deepEqual(Object.keys(out), ['2026-09-27', '2026-09-28', '2026-09-29']);
+        ok(Math.abs(out['2026-09-28'] - 5.0 * 10 * 1.0101) < 1e-9, `got ${out['2026-09-28']}`);
+        ok(Math.abs(out['2026-09-29'] - 5.2 * 10 * 1.0102) < 1e-9);
+        const rateReads = calls.filter(c => c.startsWith('query@') && !c.endsWith('final'));
+        // Every day from the configured start to the requested day, once: the
+        // days before the contract existed are remembered as such.
+        equal(rateReads.length, 29, `one view call per day: ${rateReads.length}`);
+        const cached = JSON.parse(await readFile(join(dataDir, 'rates', 'lst-pool.near.json'), 'utf8'));
+        ok(Math.abs(cached['2026-09-28'] - 1.0101) < 1e-9);
+        equal(cached['2026-09-26'], null, 'a day before the contract existed is remembered as none');
+        const again = [];
+        globalThis.fetch = rpcMock(again);
+        await fetchPriceHistory('lst-pool.near', 'NOK', '2026-09-29');
+        equal(again.filter(c => c.startsWith('query@')).length, 0, 'nothing is asked twice');
+    });
+
+    test('a day already read is never read again', async () => {
+        await mkdir(join(dataDir, 'rates'), { recursive: true });
+        const none = Object.fromEntries(Array.from({ length: 26 }, (_, i) => [new Date(Date.parse('2026-09-01T00:00:00Z') + i * 86_400_000).toISOString().slice(0, 10), null]));
+        await writeFile(join(dataDir, 'rates', 'lst-pool.near.json'), JSON.stringify({ ...none, '2026-09-27': 1.01, '2026-09-28': 1.0101, '2026-09-29': 1.0102 }));
+        const calls = [];
+        globalThis.fetch = rpcMock(calls);
+        const out = await fetchPriceHistory('lst-pool.near', 'NOK', '2026-09-29');
+        equal(calls.filter(c => c.startsWith('query@')).length, 0, 'no view calls');
+        ok(Math.abs(out['2026-09-28'] - 50 * 1.0101) < 1e-9);
+    });
+
+    test('spot is the base spot times the rate at the chain head', async () => {
+        globalThis.fetch = async (url, init) => {
+            if (init?.body) return rpcMock([])(url, init);
+            return jsonResponse({ near: { usd: 5.5, nok: 55 } });
+        };
+        const out = await fetchCurrent(['near', 'lst-pool.near'], ['usd', 'nok']);
+        const headRate = rateOn(dayOf(HEAD));
+        ok(Math.abs(out['lst-pool.near'].nok - 55 * headRate) < 1e-9, `got ${out['lst-pool.near'].nok}`);
+        equal(out.near.usd, 5.5);
+    });
+
+    test('the contracts priced this way are listed', () => {
+        deepEqual(fetchRateTokens(), ['lst-pool.near']);
     });
 });

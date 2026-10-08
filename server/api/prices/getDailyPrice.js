@@ -3,6 +3,7 @@ import { fetchFullDailyHistory as fetchDefiLlamaFullDailyHistory } from './provi
 import { fetchDailyHistory as fetchCoinGeckoDailyHistory } from './providers/coingecko.js';
 import { fetchHistoryRange as fetchForexHistoryRange } from './providers/frankfurter.js';
 import { coinId } from './token-map.js';
+import { RATE_TOKENS, isRateToken, loadRateHistory } from './rate-tokens.js';
 
 const tokenLoads = new Map();
 const forexLoads = new Map();
@@ -84,6 +85,10 @@ async function loadForex(currency) {
     });
 }
 
+/** The days a rate exists for; a null is a day the contract did not. */
+function known(rates) {
+    return Object.fromEntries(Object.entries(rates).filter(([, v]) => v != null));
+}
 function carryForwardLookup(map, sortedDates, target) {
     if (map[target] != null) return map[target];
     let lo = 0;
@@ -102,6 +107,14 @@ function carryForwardLookup(map, sortedDates, target) {
 }
 
 export async function getDailyPrice(token, currency, date) {
+    if (isRateToken(token)) {
+        const spec = RATE_TOKENS[String(token).toLowerCase()];
+        const base = await getDailyPrice(spec.base, currency, date);
+        if (base == null) return null;
+        const rates = known(await loadRateHistory(String(token).toLowerCase(), date));
+        const rate = carryForwardLookup(rates, Object.keys(rates).sort(), date);
+        return rate == null ? null : base * rate;
+    }
     const usd = await loadTokenPrices(token);
     const usdSorted = Object.keys(usd).sort();
     const tokenUsd = carryForwardLookup(usd, usdSorted, date);
@@ -115,6 +128,23 @@ export async function getDailyPrice(token, currency, date) {
 }
 
 export async function getPriceHistory(token, currency, todate) {
+    if (isRateToken(token)) {
+        // The base's history, each day scaled by the contract's rate that day
+        // (carried forward over a day the contract could not answer for), and
+        // nothing before the first day a rate exists: the token did not.
+        const contract = String(token).toLowerCase();
+        const spec = RATE_TOKENS[contract];
+        const base = await getPriceHistory(spec.base, currency, todate);
+        const rates = known(await loadRateHistory(contract, todate ? new Date(todate).toISOString().slice(0, 10) : undefined));
+        const rateDates = Object.keys(rates).sort();
+        const out = {};
+        for (const date of Object.keys(base).sort()) {
+            if (rateDates.length === 0 || date < rateDates[0]) continue;
+            const rate = carryForwardLookup(rates, rateDates, date);
+            if (rate != null) out[date] = base[date] * rate;
+        }
+        return out;
+    }
     const usd = await loadTokenPrices(token);
     const todateStr = todate ? new Date(todate).toISOString().slice(0, 10) : null;
     const upper = currency.toUpperCase();

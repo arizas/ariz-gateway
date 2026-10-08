@@ -12,6 +12,9 @@ function pricesDir() {
 function forexDir() {
     return join(dataDir(), 'forex');
 }
+function ratesDir() {
+    return join(dataDir(), 'rates');
+}
 
 async function readJson(path) {
     try {
@@ -77,6 +80,22 @@ export async function writeForex(currency, data) {
     await writeJsonAtomic(join(dir, `${currency.toLowerCase()}.json`), dir, data);
 }
 
+export async function readRates(contract) {
+    return readJson(join(ratesDir(), `${fileKey(contract)}.json`));
+}
+export async function writeRates(contract, data) {
+    await writeJsonAtomic(join(ratesDir(), `${fileKey(contract)}.json`), ratesDir(), data);
+}
+const BLOCKS_FILE = '_blocks.json';
+export async function readBlockOfDay(date) {
+    const all = await readJson(join(ratesDir(), BLOCKS_FILE));
+    return all?.[date] ?? null;
+}
+export async function writeBlockOfDay(date, height) {
+    const all = (await readJson(join(ratesDir(), BLOCKS_FILE))) ?? {};
+    all[date] = height;
+    await writeJsonAtomic(join(ratesDir(), BLOCKS_FILE), ratesDir(), all);
+}
 export async function listCachedTokens() {
     return listJsonFiles(pricesDir());
 }
