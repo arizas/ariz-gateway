@@ -15,7 +15,7 @@
     "cgi": "^0.3.1",
     "encrypted-git-storage": "^0.1.7",
     "express": "^4.21.2",
-    "near-accounting-export": "github:PeterSalomonsen/near-accounting-export#bc3d28b62866bd8b927960a98e52fea3d260d90d",
+    "near-accounting-export": "github:PeterSalomonsen/near-accounting-export#6907b6e3a0413127ebe077e2139a54b3b2bc74a2",
     "near-api-js": "^2.1.4"
   },
   "devDependencies": {
