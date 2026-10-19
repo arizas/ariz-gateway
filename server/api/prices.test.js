@@ -118,6 +118,22 @@ describe('prices', () => {
         equal(calls, 1);
     });
 
+    test('current asks CoinGecko when each price was last updated, and the currency list does not', async () => {
+        const urls = [];
+        globalThis.fetch = async (url) => {
+            urls.push(String(url));
+            return jsonResponse({ solana: { usd: 150, last_updated_at: 1792324320 } });
+        };
+
+        // A token no other test asks for: both answers stay in the in-memory cache.
+        const out = await fetchCurrent(['solana'], ['usd']);
+        await fetchCurrencyList('SOL');
+
+        deepEqual(out, { solana: { usd: 150, last_updated_at: 1792324320 } });
+        ok(urls[0].includes('include_last_updated_at=true'));
+        ok(!urls[1].includes('include_last_updated_at'), 'the currency list is the keys of this entry');
+    });
+
     test('currencylist returns the spot map for the base token', async () => {
         globalThis.fetch = async () => jsonResponse({ near: { usd: 5.5, eur: 5.0, nok: 55 } });
 
@@ -486,6 +502,15 @@ describe('contract-rate pricing', () => {
         const headRate = rateOn(dayOf(HEAD));
         ok(Math.abs(out['lst-pool.near'].nok - 55 * headRate) < 1e-9, `got ${out['lst-pool.near'].nok}`);
         equal(out.near.usd, 5.5);
+    });
+
+    test('a rate token carries its base price time unchanged', async () => {
+        globalThis.fetch = async (url, init) => {
+            if (init?.body) return rpcMock([])(url, init);
+            return jsonResponse({ near: { usd: 5.5, last_updated_at: 1792324320 } });
+        };
+        const out = await fetchCurrent(['lst-pool.near'], ['usd']);
+        equal(out['lst-pool.near'].last_updated_at, 1792324320);
     });
 
     test('the contracts priced this way are listed', () => {
