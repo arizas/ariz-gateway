@@ -88,7 +88,9 @@ export async function fetchCurrent(tokens, vsCurrencies) {
             const contract = String(t).toLowerCase();
             const rate = await spotCached(`rate:${contract}`, () => readRate(contract, 'final'));
             const base = spot[RATE_TOKENS[contract].base] ?? {};
-            out[t] = Object.fromEntries(Object.entries(base).map(([cur, p]) => [cur, p == null ? null : p * rate]));
+            // The time is the base's, not a price: carried over, not multiplied.
+            out[t] = Object.fromEntries(Object.entries(base).map(([cur, p]) =>
+                [cur, cur === 'last_updated_at' || p == null ? p : p * rate]));
         }
         return out;
     }
@@ -96,7 +98,7 @@ export async function fetchCurrent(tokens, vsCurrencies) {
     const sortedIds = [...ids].sort();
     const sortedVs = [...vs.map(v => v.toLowerCase())].sort();
     const cacheKey = `current:${sortedIds.join(',')}:${sortedVs.join(',')}`;
-    const data = await spotCached(cacheKey, () => fetchSimplePrice(ids, vs));
+    const data = await spotCached(cacheKey, () => fetchSimplePrice(ids, vs, { lastUpdatedAt: true }));
     const out = {};
     tokens.forEach((token, i) => {
         out[token] = data[ids[i]] ?? {};
