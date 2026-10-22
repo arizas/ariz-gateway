@@ -15,6 +15,7 @@ import { createRpcHandler } from './rpc.js';
 import { makeStoreRepoId } from './store-id.js';
 import { createStoreMount } from './store-mount.js';
 import { createCorsMiddleware } from './cors.js';
+import { createFrontendIndexHandler } from './frontend.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createRouter as createAccountingRouter, startWorker as startAccountingWorker } from 'near-accounting-export';
 import { createDeductClient } from './arizcredits/deduct.js';
@@ -231,17 +232,20 @@ if (frontendEnabled) {
     // Static assets first, then an SPA fallback to index.html for client-routed
     // paths (/accounts, /staking, ...). API routes are registered above, so they
     // take precedence; only non-/api, non-/rpc GETs fall through to the app.
+    // The page itself always goes through the nonce, including when asked for
+    // by name: express.static would hand out the placeholder, which runs no script.
+    const serveIndex = createFrontendIndexHandler(frontendIndex, { setHeaders: setIsolationHeaders });
     app.use((req, res, next) => {
         if (req.method === 'GET' || req.method === 'HEAD') setIsolationHeaders(res);
         next();
     });
+    app.get('/index.html', serveIndex);
     app.use(express.static(frontendDir, { index: false }));
     app.use((req, res, next) => {
         if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/rpc') || req.path.startsWith('/git')) {
             return next();
         }
-        setIsolationHeaders(res);
-        res.sendFile(frontendIndex);
+        serveIndex(req, res, next);
     });
     console.log(`Serving frontend from ${frontendDir}${frontendCoep ? ` (cross-origin isolation: ${frontendCoep})` : ''}`);
 }
