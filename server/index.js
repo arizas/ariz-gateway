@@ -12,8 +12,9 @@ import {
 } from './api/prices/index.js';
 import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
-import { createFastNearRouter, createPaymentGate } from './fastnear-proxy.js';
-import { recordProxyRequest } from './arizcredits/proxy-usage.js';
+import { createPaymentGate } from './arizcredits/payment-gate.js';
+import { recordUsage } from './arizcredits/usage.js';
+import { createAccessKeysRouter } from './api/accesskeys/index.js';
 import { makeStoreRepoId } from './store-id.js';
 import { createStoreMount } from './store-mount.js';
 import { createCorsMiddleware } from './cors.js';
@@ -131,20 +132,20 @@ app.get('/api/intents/config', auth, (req, res) => {
 });
 
 // Every request sent upstream is counted for the signed-in account and billed
-// to it (server/arizcredits/proxy-usage.js); with billing on, only an account
-// that can pay gets through.
+// to it (server/arizcredits/usage.js); with billing on, only an account that
+// can pay gets through.
 const paymentGate = createPaymentGate(accountGate);
 const nodeHost = new URL(nodeUrl).host;
 app.post('/rpc', auth, paymentGate, (req, res, next) => {
-    recordProxyRequest(dataDir, req.accountId, nodeHost);
+    recordUsage(dataDir, req.accountId, nodeHost);
     next();
 }, handleRpc);
 
-// FastNear with the gateway's API key, for the few calls the app needs
-// (arizas/Ariz-Portfolio#140). See server/fastnear-proxy.js.
-app.use('/api/fastnear', auth, paymentGate, createFastNearRouter({
-    apiKey: process.env.FASTNEAR_API_KEY,
+// An account's access keys and when each last signed (arizas/Ariz-Portfolio#140).
+// See server/api/accesskeys/index.js.
+app.use('/api/accesskeys', auth, paymentGate, createAccessKeysRouter({
     dataDir,
+    apiKey: process.env.FASTNEAR_API_KEY,
 }));
 
 // Path-based account selection. When billing is on, each monitored account is

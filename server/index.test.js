@@ -123,11 +123,9 @@ describe('server', { only: false }, () => {
         equal(await response.text(), 'failed to parse token');
     });
 
-    test('unauthenticated /api/fastnear is rejected', async () => {
-        for (const path of ['/rpc', '/archival-rpc', '/tx/v0/account', '/tx/v0/transactions']) {
-            const response = await fetch(`${baseUrl()}/api/fastnear${path}`, {
-                method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
-            });
+    test('unauthenticated /api/accesskeys is rejected', async () => {
+        for (const [method, path] of [['GET', '/alice.near'], ['POST', '/alice.near/lastuse']]) {
+            const response = await fetch(`${baseUrl()}/api/accesskeys${path}`, { method });
             equal(response.status, 401, path);
             equal(await response.text(), 'failed to parse token', path);
         }
