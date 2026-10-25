@@ -261,7 +261,14 @@ describe('access key helpers', () => {
                 calls++;
                 if (calls === 1) return new Response('{}', { status: 429 });
                 if (calls === 2) {
-                    return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+                    // A request that hangs until the timeout aborts it. The
+                    // timeout's timer does not keep the process alive (a real
+                    // fetch's socket does), so hold a timer of our own.
+                    const keepAlive = setTimeout(() => { }, 10_000);
+                    return new Promise((_, reject) => init.signal.addEventListener('abort', () => {
+                        clearTimeout(keepAlive);
+                        reject(init.signal.reason);
+                    }));
                 }
                 return new Response(JSON.stringify({ jsonrpc: '2.0', result: { header: { timestamp_nanosec: '1' } } }));
             },
