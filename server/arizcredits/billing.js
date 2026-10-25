@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readFastNearMetrics } from 'near-accounting-export';
 import { loadMonitors } from './monitors.js';
+import { readUsage } from './usage.js';
 
 // FastNear hosts that cost credits. The free tx-index API (tx.main.fastnear.com)
 // is intentionally excluded.
@@ -12,6 +13,9 @@ export const DEFAULT_BILLABLE_HOSTS = [
 ];
 
 const MS_PER_DAY = 86_400_000;
+
+// Billing key for the requests the gateway made to answer an account itself.
+export const USAGE_PREFIX = 'user:';
 export const utcDay = (now = Date.now()) => Math.floor(now / MS_PER_DAY);
 
 function sumBillable(byHost, billableHosts) {
@@ -56,6 +60,13 @@ export function createBillingPass({ dataDir, deductClient, ratePerRequest, billa
     async function runOnce({ now = Date.now() } = {}) {
         const metrics = readFastNearMetrics(dataDir); // { account: { host: count } }
         const monitors = loadMonitors(dataDir);       // { account: payer }
+        // What the gateway sent upstream to answer a signed-in user (/rpc,
+        // /api/accesskeys) is paid by that user. Kept under its own key, so its
+        // watermark never mixes with the worker's count for the same account.
+        for (const [account, byHost] of Object.entries(readUsage(dataDir))) {
+            metrics[`${USAGE_PREFIX}${account}`] = byHost;
+            monitors[`${USAGE_PREFIX}${account}`] = account;
+        }
         const db = load();
         db.accounts = db.accounts || {};
 

@@ -12,6 +12,9 @@ import {
 } from './api/prices/index.js';
 import { createAuthMiddleware } from './accesscontrol/middleware.js';
 import { createRpcHandler } from './rpc.js';
+import { createPaymentGate } from './arizcredits/payment-gate.js';
+import { recordUsage } from './arizcredits/usage.js';
+import { createAccessKeysRouter } from './api/accesskeys/index.js';
 import { makeStoreRepoId } from './store-id.js';
 import { createStoreMount } from './store-mount.js';
 import { createCorsMiddleware } from './cors.js';
@@ -128,7 +131,22 @@ app.get('/api/intents/config', auth, (req, res) => {
     res.json({ apiUrl: oneClickApiUrl, apiKey: oneClickApiKey });
 });
 
-app.post('/rpc', auth, handleRpc);
+// Every request sent upstream is counted for the signed-in account and billed
+// to it (server/arizcredits/usage.js); with billing on, only an account that
+// can pay gets through.
+const paymentGate = createPaymentGate(accountGate);
+const nodeHost = new URL(nodeUrl).host;
+app.post('/rpc', auth, paymentGate, (req, res, next) => {
+    recordUsage(dataDir, req.accountId, nodeHost);
+    next();
+}, handleRpc);
+
+// An account's access keys and when each last signed (arizas/Ariz-Portfolio#140).
+// See server/api/accesskeys/index.js.
+app.use('/api/accesskeys', auth, paymentGate, createAccessKeysRouter({
+    dataDir,
+    apiKey: process.env.FASTNEAR_API_KEY,
+}));
 
 // Path-based account selection. When billing is on, each monitored account is
 // paid for by a payer account (monitors.json). The payer is established

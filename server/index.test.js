@@ -123,6 +123,14 @@ describe('server', { only: false }, () => {
         equal(await response.text(), 'failed to parse token');
     });
 
+    test('unauthenticated /api/accesskeys is rejected', async () => {
+        for (const [method, path] of [['GET', '/alice.near'], ['POST', '/alice.near/lastuse']]) {
+            const response = await fetch(`${baseUrl()}/api/accesskeys${path}`, { method });
+            equal(response.status, 401, path);
+            equal(await response.text(), 'failed to parse token', path);
+        }
+    });
+
     test('/api with a token signed by a key not on the account is rejected', async () => {
         // Random key that is not an access key on the contract account.
         const stranger = KeyPair.fromRandom('ed25519');
