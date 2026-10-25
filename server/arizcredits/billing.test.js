@@ -108,4 +108,26 @@ describe('gateway billing pass (per-payer)', () => {
         deepEqual(client.calls[1], [{ user: 'p.near', amount: '50', description: 'fastnear-usage' }]); // 25*2
         equal(billing(dir).accounts['a.near'].billedRequests, 35);
     });
+
+    test('charges an account for its own requests through the gateway, apart from what it monitors', async () => {
+        writeMetrics(dir, { 'alice.near': archival(10) });
+        writeMonitors(dir, { 'alice.near': 'payer.near' });
+        writeFileSync(join(dir, 'proxy-usage.json'), JSON.stringify({ accounts: {
+            'alice.near': { byHost: { 'archival-rpc.mainnet.fastnear.com': 3, 'rpc.mainnet.fastnear.com': 2, 'tx.main.fastnear.com': 40 } },
+        } }));
+        const client = fakeClient({ caps: { 'payer.near': '100000', 'alice.near': '100000' } });
+        const b = createBillingPass({ dataDir: dir, deductClient: client, ratePerRequest: 2 });
+
+        await b.runOnce({ now: 0 });
+
+        const byUser = Object.fromEntries(client.calls[0].map(e => [e.user, e.amount]));
+        equal(byUser['payer.near'], '20', 'the worker sync of alice.near, to its payer');
+        equal(byUser['alice.near'], '10', '(3+2)*2: the free tx index is not billed');
+        equal(billing(dir).accounts['proxy:alice.near'].billedRequests, 5);
+        equal(billing(dir).accounts['alice.near'].billedRequests, 10);
+
+        // Nothing new: nothing charged.
+        await b.runOnce({ now: 86_400_000 });
+        equal(client.calls.length, 1);
+    });
 });

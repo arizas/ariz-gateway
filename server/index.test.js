@@ -123,6 +123,16 @@ describe('server', { only: false }, () => {
         equal(await response.text(), 'failed to parse token');
     });
 
+    test('unauthenticated /api/fastnear is rejected', async () => {
+        for (const path of ['/rpc', '/archival-rpc', '/tx/v0/account', '/tx/v0/transactions']) {
+            const response = await fetch(`${baseUrl()}/api/fastnear${path}`, {
+                method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+            });
+            equal(response.status, 401, path);
+            equal(await response.text(), 'failed to parse token', path);
+        }
+    });
+
     test('/api with a token signed by a key not on the account is rejected', async () => {
         // Random key that is not an access key on the contract account.
         const stranger = KeyPair.fromRandom('ed25519');
