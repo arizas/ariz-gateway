@@ -11,6 +11,8 @@ export const FASTNEAR = {
 
 export class FastNearError extends Error {}
 
+const ACCESS_KEYS_PER_PAGE = 100;
+
 /**
  * @param {object} opts
  * @param {string} [opts.apiKey] FASTNEAR_API_KEY
@@ -63,7 +65,29 @@ export function createFastNearClient({ apiKey, onRequest = () => { }, fetchImpl 
     }
 
     return {
-        viewAccessKeyList: (accountId) => rpc(FASTNEAR.rpc, 'query', { request_type: 'view_access_key_list', finality: 'final', account_id: accountId }),
+        /**
+         * All the account's keys. Since nearcore 2.14 one answer holds at most
+         * 100 (more is refused with TOO_MANY_ACCESS_KEYS), so they come in
+         * pages, each going on after the previous page's `last_key`.
+         * @returns {Promise<{block_height: number, keys: Array}>}
+         */
+        viewAccessKeyList: async (accountId) => {
+            const keys = [];
+            let blockHeight;
+            let afterKey;
+            for (;;) {
+                const page = await rpc(FASTNEAR.rpc, 'query', {
+                    request_type: 'view_access_key_list', finality: 'final', account_id: accountId,
+                    limit: ACCESS_KEYS_PER_PAGE, ...(afterKey ? { after_key: afterKey } : {}),
+                });
+                blockHeight ??= page.block_height;
+                keys.push(...page.keys);
+                if (!page.last_key || page.keys.length === 0) {
+                    return { block_height: blockHeight, keys };
+                }
+                afterKey = page.last_key;
+            }
+        },
         block: (blockId) => rpc(FASTNEAR.archival, 'block', { block_id: blockId }),
         /** One page of the transactions `accountId` signed, newest first. */
         signedTransactions: async (accountId, resumeToken) => {

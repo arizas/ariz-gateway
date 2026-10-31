@@ -2,7 +2,7 @@ import { describe, test } from 'node:test';
 import { equal, rejects, deepEqual } from 'node:assert/strict';
 import { KeyPair } from 'near-api-js';
 import { randomBytes, createHash } from 'node:crypto';
-import { serializeNep413Payload, verifyNep413 } from './nep413.js';
+import { serializeNep413Payload, verifyNep413, makeAccessKeyReader } from './nep413.js';
 
 const RECIPIENT = 'arizportfolio.near';
 const ACCOUNT = 'alice.near';
@@ -26,16 +26,17 @@ function makeToken(keyPair, { accountId = ACCOUNT, recipient = RECIPIENT, issued
     return Buffer.from(JSON.stringify(payload)).toString('base64');
 }
 
-// viewAccessKeyList stub that reports `keyPair` as a Full Access key on ACCOUNT.
+// viewAccessKey stub that reports `keyPair` as a Full Access key on ACCOUNT.
 function fakReader(keyPair, permission = 'FullAccess') {
-    return async () => [{ public_key: keyPair.getPublicKey().toString(), access_key: { nonce: 0, permission } }];
+    return async (accountId, publicKey) =>
+        accountId === ACCOUNT && publicKey === keyPair.getPublicKey().toString() ? { nonce: 0, permission } : null;
 }
 
 describe('NEP-413 verification', () => {
     test('valid token resolves the accountId', async () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp);
-        const res = await verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp) });
+        const res = await verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: fakReader(kp) });
         deepEqual(res, { accountId: ACCOUNT });
     });
 
@@ -43,7 +44,7 @@ describe('NEP-413 verification', () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp, { recipient: 'evil.near' });
         await rejects(
-            verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp) }),
+            verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: fakReader(kp) }),
             /recipient mismatch/,
         );
     });
@@ -52,7 +53,7 @@ describe('NEP-413 verification', () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp, { issuedAt: Date.now() - 2 * 60 * 60 * 1000 });
         await rejects(
-            verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp), maxAgeMs: 60 * 60 * 1000 }),
+            verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: fakReader(kp), maxAgeMs: 60 * 60 * 1000 }),
             /token expired/,
         );
     });
@@ -63,7 +64,7 @@ describe('NEP-413 verification', () => {
     test('a signed message stays valid for a day', async () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp, { issuedAt: Date.now() - 23 * 60 * 60 * 1000 });
-        const res = await verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp) });
+        const res = await verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: fakReader(kp) });
         deepEqual(res, { accountId: ACCOUNT });
     });
 
@@ -71,7 +72,7 @@ describe('NEP-413 verification', () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp, { issuedAt: Date.now() - 25 * 60 * 60 * 1000 });
         await rejects(
-            verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp) }),
+            verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: fakReader(kp) }),
             /token expired/,
         );
     });
@@ -80,7 +81,7 @@ describe('NEP-413 verification', () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp, { issuedAt: Date.now() + 10 * 60 * 1000 });
         await rejects(
-            verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp) }),
+            verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: fakReader(kp) }),
             /token expired/,
         );
     });
@@ -89,7 +90,7 @@ describe('NEP-413 verification', () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp, { tamper: true });
         await rejects(
-            verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fakReader(kp) }),
+            verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: fakReader(kp) }),
             /invalid signature/,
         );
     });
@@ -98,7 +99,7 @@ describe('NEP-413 verification', () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp);
         await rejects(
-            verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: async () => [] }),
+            verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: async () => null }),
             /public key not on account/,
         );
     });
@@ -106,14 +107,45 @@ describe('NEP-413 verification', () => {
     test('function-call (non-full-access) key is rejected', async () => {
         const kp = KeyPair.fromRandom('ed25519');
         const token = makeToken(kp);
-        const fcReader = async () => [{
-            public_key: kp.getPublicKey().toString(),
-            access_key: { nonce: 0, permission: { FunctionCall: { allowance: '1', receiver_id: 'x', method_names: [] } } },
-        }];
+        const fcReader = fakReader(kp, { FunctionCall: { allowance: '1', receiver_id: 'x', method_names: [] } });
         await rejects(
-            verifyNep413(token, { recipient: RECIPIENT, viewAccessKeyList: fcReader }),
+            verifyNep413(token, { recipient: RECIPIENT, viewAccessKey: fcReader }),
             /not a full access key/,
         );
+    });
+
+    test('the key reader asks for the one key, so an account with any number of keys can sign in', async () => {
+        const asked = [];
+        const provider = {
+            async query(params) {
+                asked.push(params);
+                // Since nearcore 2.14 a list of more than 100 keys is refused.
+                if (params.request_type === 'view_access_key_list') throw new Error('TOO_MANY_ACCESS_KEYS');
+                if (params.public_key === 'ed25519:GONE') {
+                    const e = new Error('access key ed25519:GONE does not exist while viewing');
+                    e.type = 'AccessKeyDoesNotExist';
+                    throw e;
+                }
+                return { block_hash: 'H', block_height: 1, nonce: 5, permission: 'FullAccess' };
+            },
+        };
+        let t = 0;
+        const viewAccessKey = makeAccessKeyReader(provider, { ttlMs: 1000, now: () => t });
+        deepEqual(await viewAccessKey('a.near', 'ed25519:K'), { nonce: 5, permission: 'FullAccess' });
+        deepEqual(asked[0], { request_type: 'view_access_key', finality: 'final', account_id: 'a.near', public_key: 'ed25519:K' });
+        equal(await viewAccessKey('a.near', 'ed25519:GONE'), null);
+
+        // Cached for its time, then asked again.
+        await viewAccessKey('a.near', 'ed25519:K');
+        equal(asked.length, 2);
+        t = 2000;
+        await viewAccessKey('a.near', 'ed25519:K');
+        equal(asked.length, 3);
+    });
+
+    test('an RPC failure is not taken as "no such key"', async () => {
+        const viewAccessKey = makeAccessKeyReader({ async query() { throw new Error('rate limited'); } });
+        await rejects(viewAccessKey('a.near', 'ed25519:K'), /rate limited/);
     });
 
     test('serialize is deterministic', () => {
