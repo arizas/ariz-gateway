@@ -28,7 +28,15 @@ function fakeFastNear() {
         chain.calls.push({ path, body, authorization: init.headers.Authorization });
         const json = (value, status = 200) => new Response(JSON.stringify(value), { status });
         if (path === `${FASTNEAR.rpc}:query`) {
-            return json({ jsonrpc: '2.0', result: { block_height: 221000000, keys: chain.keys } });
+            // Pages of at most 100, as nearcore 2.14 answers.
+            const { limit, after_key } = body.params;
+            if (!limit && chain.keys.length > 100) {
+                return json({ jsonrpc: '2.0', error: { cause: { name: 'TOO_MANY_ACCESS_KEYS' }, message: 'Server error' } });
+            }
+            const start = after_key ? chain.keys.findIndex(k => k.public_key === after_key) + 1 : 0;
+            const page = chain.keys.slice(start, start + (limit ?? chain.keys.length));
+            const more = start + page.length < chain.keys.length;
+            return json({ jsonrpc: '2.0', result: { block_height: 221000000, keys: page, ...(more ? { last_key: page.at(-1).public_key } : {}) } });
         }
         if (path === `${FASTNEAR.archival}:block`) {
             // Block 117149952 was skipped by the chain.
@@ -204,6 +212,17 @@ describe('/api/accesskeys', () => {
         const { body } = await request('POST', `/${ACCOUNT}/lastuse`);
         equal(byKey(body)['ed25519:C'].lastUse.txHash, 'T1');
         equal(byKey(body)['ed25519:C'].lastUseNotIndexed, false);
+    });
+
+    test('lists an account with more than 100 keys, a page at a time', async () => {
+        await start();
+        chain.keys = Array.from({ length: 151 }, (_, i) => fullAccess(`ed25519:K${String(i).padStart(3, '0')}`, 1000 + i));
+        const { status, body } = await request('GET', `/${ACCOUNT}`);
+        equal(status, 200);
+        equal(body.keys.length, 151);
+        equal(new Set(body.keys.map(k => k.publicKey)).size, 151);
+        deepEqual(chain.calls.map(c => c.body.params.after_key ?? null), [null, 'ed25519:K099']);
+        deepEqual(readUsage(dir), { 'bob.near': { 'rpc.mainnet.fastnear.com': 2 } });
     });
 
     test('refuses what is not a NEAR account id', async () => {

@@ -1,5 +1,5 @@
 import nearApi from 'near-api-js';
-import { verifyNep413, makeAccessKeyListReader } from './nep413.js';
+import { verifyNep413, makeAccessKeyReader } from './nep413.js';
 
 class AuthError extends Error {
     constructor(message) {
@@ -12,7 +12,7 @@ class AuthError extends Error {
  * Build the request authenticator. Auth is NEP-413: the client sends a
  * `Bearer <base64(JSON)>` signed message; we verify the signature, the
  * recipient, a stateless timestamp window, and that the signing key is a Full
- * Access key on the claimed account (via cached `view_access_key_list`).
+ * Access key on the claimed account (via cached `view_access_key`).
  *
  * @param {object} opts
  * @param {string} opts.networkId
@@ -23,7 +23,7 @@ class AuthError extends Error {
 export async function createAuthenticate({ networkId, contractId, nodeUrl, recipient }) {
     const near = await nearApi.connect({ networkId, contractId, nodeUrl });
     const provider = near.connection.provider;
-    const viewAccessKeyList = makeAccessKeyListReader(provider);
+    const viewAccessKey = makeAccessKeyReader(provider);
     const expectedRecipient = recipient ?? contractId;
 
     return async function authenticate(req) {
@@ -33,7 +33,7 @@ export async function createAuthenticate({ networkId, contractId, nodeUrl, recip
         }
         const token = header.slice('Bearer '.length).trim();
         try {
-            return await verifyNep413(token, { recipient: expectedRecipient, viewAccessKeyList });
+            return await verifyNep413(token, { recipient: expectedRecipient, viewAccessKey });
         } catch (err) {
             throw new AuthError(err.message || 'Unauthorized');
         }

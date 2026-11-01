@@ -68,13 +68,14 @@ class AuthError extends Error {}
  * @param {string} token            base64(JSON) bearer value (no "Bearer " prefix)
  * @param {object} opts
  * @param {string} opts.recipient   the recipient this gateway expects
- * @param {(accountId:string)=>Promise<Array>} opts.viewAccessKeyList
- *        resolves the account's access keys (RPC `view_access_key_list` `.keys`)
+ * @param {(accountId:string, publicKey:string)=>Promise<object|null>} opts.viewAccessKey
+ *        resolves one access key of the account (RPC `view_access_key`), or
+ *        null when the account has no such key
  * @param {number} [opts.maxAgeMs]
  * @param {number} [opts.now]       injectable clock for tests
  * @returns {Promise<{accountId:string}>}
  */
-export async function verifyNep413(token, { recipient, viewAccessKeyList, maxAgeMs = DEFAULT_MAX_AGE_MS, now = Date.now() }) {
+export async function verifyNep413(token, { recipient, viewAccessKey, maxAgeMs = DEFAULT_MAX_AGE_MS, now = Date.now() }) {
     let payload;
     try {
         payload = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
@@ -116,30 +117,43 @@ export async function verifyNep413(token, { recipient, viewAccessKeyList, maxAge
     }
     if (!ok) throw new AuthError('invalid signature');
 
-    const keys = await viewAccessKeyList(accountId);
-    const match = (keys || []).find((k) => k.public_key === publicKey);
-    if (!match) throw new AuthError('public key not on account');
-    if (match.access_key?.permission !== 'FullAccess') throw new AuthError('not a full access key');
+    const accessKey = await viewAccessKey(accountId, publicKey);
+    if (!accessKey) throw new AuthError('public key not on account');
+    if (accessKey.permission !== 'FullAccess') throw new AuthError('not a full access key');
 
     return { accountId };
 }
 
 /**
- * Build a `viewAccessKeyList(accountId)` reader from a near-api-js provider,
- * with a short TTL cache per account so we don't hit RPC on every request.
+ * Build a `viewAccessKey(accountId, publicKey)` reader from a near-api-js
+ * provider, with a short TTL cache per key so we don't hit RPC on every
+ * request.
+ *
+ * One key, not the account's list: since nearcore 2.14 the RPC refuses to
+ * list more than 100 keys in one answer (TOO_MANY_ACCESS_KEYS), and an account
+ * with more could not sign in at all.
  */
-export function makeAccessKeyListReader(provider, { ttlMs = 60 * 1000, now = () => Date.now() } = {}) {
-    const cache = new Map(); // accountId -> { keys, expiresAt }
-    return async (accountId) => {
-        const cached = cache.get(accountId);
-        if (cached && cached.expiresAt > now()) return cached.keys;
-        const res = await provider.query({
-            request_type: 'view_access_key_list',
-            finality: 'final',
-            account_id: accountId,
-        });
-        const keys = res.keys || [];
-        cache.set(accountId, { keys, expiresAt: now() + ttlMs });
-        return keys;
+export function makeAccessKeyReader(provider, { ttlMs = 60 * 1000, now = () => Date.now() } = {}) {
+    const cache = new Map(); // `${accountId} ${publicKey}` -> { accessKey, expiresAt }
+    return async (accountId, publicKey) => {
+        const cacheKey = `${accountId} ${publicKey}`;
+        const cached = cache.get(cacheKey);
+        if (cached && cached.expiresAt > now()) return cached.accessKey;
+        let accessKey;
+        try {
+            const res = await provider.query({
+                request_type: 'view_access_key',
+                finality: 'final',
+                account_id: accountId,
+                public_key: publicKey,
+            });
+            accessKey = { nonce: res.nonce, permission: res.permission };
+        } catch (e) {
+            // No such key, or no such account: near-api-js says it the same way.
+            if (e?.type !== 'AccessKeyDoesNotExist') throw e;
+            accessKey = null;
+        }
+        cache.set(cacheKey, { accessKey, expiresAt: now() + ttlMs });
+        return accessKey;
     };
 }
