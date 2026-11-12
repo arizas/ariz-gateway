@@ -7,6 +7,7 @@ export const FASTNEAR = {
     rpc: 'https://rpc.mainnet.fastnear.com/',
     archival: 'https://archival-rpc.mainnet.fastnear.com/',
     tx: 'https://tx.main.fastnear.com',
+    api: 'https://api.fastnear.com',
 };
 
 export class FastNearError extends Error {}
@@ -23,17 +24,18 @@ const ACCESS_KEYS_PER_PAGE = 100;
  * @param {number[]} [opts.pauses] before each retry of a 429, 5xx or timeout
  */
 export function createFastNearClient({ apiKey, onRequest = () => { }, fetchImpl = fetch, timeoutMillis = 20_000, pauses = [1000, 3000, 9000] } = {}) {
-    async function post(url, body) {
+    // A GET when there is no body.
+    async function request(url, body) {
         for (let attempt = 0; ; attempt++) {
             let retryable;
             try {
                 const response = await fetchImpl(url, {
-                    method: 'POST',
+                    method: body === undefined ? 'GET' : 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
+                        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
                         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
                     },
-                    body: JSON.stringify(body),
+                    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
                     signal: AbortSignal.timeout(timeoutMillis),
                 });
                 if (response.status !== 429) {
@@ -57,14 +59,36 @@ export function createFastNearClient({ apiKey, onRequest = () => { }, fetchImpl 
     }
 
     async function rpc(url, method, params) {
-        const json = await post(url, { jsonrpc: '2.0', id: method, method, params });
+        const json = await request(url, { jsonrpc: '2.0', id: method, method, params });
         if (json.error) {
             throw new FastNearError(`${method}: ${json.error.data ?? json.error.cause?.name ?? json.error.message}`);
         }
         return json.result;
     }
 
+    // 'final' asks the regular node; a block height needs the archival one.
+    const at = (block) => block === 'final'
+        ? { url: FASTNEAR.rpc, params: { finality: 'final' } }
+        : { url: FASTNEAR.archival, params: { block_id: block } };
+
     return {
+        finalBlockHeight: async () => (await rpc(FASTNEAR.rpc, 'block', { finality: 'final' })).header.height,
+        /** The account's liquid NEAR, in yocto, at a block or 'final'. */
+        nearBalance: async (accountId, block) => {
+            const { url, params } = at(block);
+            return (await rpc(url, 'query', { request_type: 'view_account', account_id: accountId, ...params })).amount;
+        },
+        /** A view call's answer, parsed as JSON. */
+        view: async (contractId, method, args, block) => {
+            const { url, params } = at(block);
+            const result = await rpc(url, 'query', {
+                request_type: 'call_function', account_id: contractId, method_name: method,
+                args_base64: Buffer.from(JSON.stringify(args)).toString('base64'), ...params,
+            });
+            return JSON.parse(Buffer.from(result.result).toString('utf8'));
+        },
+        /** FastNear's index of what an account holds: tokens with balances, staking pools. */
+        accountFull: (accountId) => request(`${FASTNEAR.api}/v1/account/${encodeURIComponent(accountId)}/full`),
         /**
          * All the account's keys. Since nearcore 2.14 one answer holds at most
          * 100 (more is refused with TOO_MANY_ACCESS_KEYS), so they come in
@@ -91,7 +115,7 @@ export function createFastNearClient({ apiKey, onRequest = () => { }, fetchImpl 
         block: (blockId) => rpc(FASTNEAR.archival, 'block', { block_id: blockId }),
         /** One page of the transactions `accountId` signed, newest first. */
         signedTransactions: async (accountId, resumeToken) => {
-            const page = await post(`${FASTNEAR.tx}/v0/account`, {
+            const page = await request(`${FASTNEAR.tx}/v0/account`, {
                 account_id: accountId, is_any_signer: true, limit: 200,
                 ...(resumeToken ? { resume_token: resumeToken } : {}),
             });
@@ -104,7 +128,7 @@ export function createFastNearClient({ apiKey, onRequest = () => { }, fetchImpl 
         },
         /** Full transactions, at most 20 hashes. */
         transactions: async (hashes) => {
-            const answer = await post(`${FASTNEAR.tx}/v0/transactions`, { tx_hashes: hashes });
+            const answer = await request(`${FASTNEAR.tx}/v0/transactions`, { tx_hashes: hashes });
             if (!Array.isArray(answer?.transactions)) {
                 throw new FastNearError(`The transactions did not come back: ${JSON.stringify(answer).substring(0, 200)}`);
             }
