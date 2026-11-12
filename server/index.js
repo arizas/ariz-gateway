@@ -15,6 +15,7 @@ import { createRpcHandler } from './rpc.js';
 import { createPaymentGate } from './arizcredits/payment-gate.js';
 import { recordUsage } from './arizcredits/usage.js';
 import { createAccessKeysRouter } from './api/accesskeys/index.js';
+import { createBalancesRouter } from './api/balances/index.js';
 import { makeStoreRepoId } from './store-id.js';
 import { createStoreMount } from './store-mount.js';
 import { createCorsMiddleware } from './cors.js';
@@ -144,6 +145,13 @@ app.post('/rpc', auth, paymentGate, (req, res, next) => {
 // An account's access keys and when each last signed (arizas/Ariz-Portfolio#140).
 // See server/api/accesskeys/index.js.
 app.use('/api/accesskeys', auth, paymentGate, createAccessKeysRouter({
+    dataDir,
+    apiKey: process.env.FASTNEAR_API_KEY,
+}));
+
+// An account's balances, now or at past blocks, and what it holds: what the
+// app's balance check compares its stored history with. See server/api/balances/index.js.
+app.use('/api/balances', auth, paymentGate, createBalancesRouter({
     dataDir,
     apiKey: process.env.FASTNEAR_API_KEY,
 }));
