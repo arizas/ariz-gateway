@@ -16,6 +16,7 @@ import { createPaymentGate } from './arizcredits/payment-gate.js';
 import { recordUsage } from './arizcredits/usage.js';
 import { createAccessKeysRouter } from './api/accesskeys/index.js';
 import { createBalancesRouter } from './api/balances/index.js';
+import { createNearAiRouter } from './api/nearai/index.js';
 import { makeStoreRepoId } from './store-id.js';
 import { createStoreMount } from './store-mount.js';
 import { createCorsMiddleware } from './cors.js';
@@ -155,6 +156,11 @@ app.use('/api/balances', auth, paymentGate, createBalancesRouter({
     dataDir,
     apiKey: process.env.FASTNEAR_API_KEY,
 }));
+
+// NVIDIA's verdict on a NEAR AI model enclave's GPUs, which the app's AI
+// assistant checks itself: NVIDIA's service does not answer browsers. See
+// server/api/nearai/index.js. Free: no FastNear or other paid request.
+app.use('/api/nearai', auth, createNearAiRouter());
 
 // Path-based account selection. When billing is on, each monitored account is
 // paid for by a payer account (monitors.json). The payer is established
