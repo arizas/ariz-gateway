@@ -514,6 +514,39 @@ describe('contract-rate pricing', () => {
     });
 
     test('the contracts priced this way are listed', () => {
-        deepEqual(fetchRateTokens(), ['lst-pool.near']);
+        deepEqual(fetchRateTokens(), ['lst-pool.near', 'cnear.assetize.near']);
+    });
+
+    // cNEAR's ft_price is yoctoNEAR per cNEAR, set by its owner. These are
+    // real published values: it moves both ways, so a day can be worth less
+    // than the day before.
+    test('cNEAR is priced by its published ft_price, down days included', async () => {
+        const published = { '2026-11-09': '1001444470000000000000000', '2026-11-10': '999871280000000000000000', '2026-11-11': '1000440820000000000000000' };
+        globalThis.fetch = async (url, init) => {
+            const body = JSON.parse(init.body);
+            if (body.method === 'block') {
+                const h = body.params.finality ? 8_000_000 : body.params.block_id; // a head in late November
+                return jsonResponse({ result: { header: { height: h, timestamp: tsOf(h).toString() } } });
+            }
+            equal(body.params.account_id, 'cnear.assetize.near');
+            equal(body.params.method_name, 'ft_price');
+            const price = published[dayOf(body.params.block_id)];
+            if (!price) return jsonResponse({ error: { name: 'HANDLER_ERROR', cause: { name: 'METHOD_NOT_FOUND' } } });
+            return jsonResponse({ result: { result: [...Buffer.from(JSON.stringify(price))] } });
+        };
+        await writeFile(join(dataDir, 'prices', 'near.json'), JSON.stringify({ '2026-11-09': 2.9, '2026-11-10': 2.8, '2026-11-11': 3.0 }));
+        await writeFile(join(dataDir, 'prices', '.meta.json'), JSON.stringify({ fullHistory: { near: '2026-11-12' } }));
+        const out = await fetchPriceHistory('cnear.assetize.near', 'NOK', '2026-11-11');
+        ok(Math.abs(out['2026-11-09'] - 2.9 * 10 * 1.00144447) < 1e-9, `got ${out['2026-11-09']}`);
+        ok(Math.abs(out['2026-11-10'] - 2.8 * 10 * 0.99987128) < 1e-9, `got ${out['2026-11-10']}`);
+        ok(Math.abs(out['2026-11-11'] - 3.0 * 10 * 1.00044082) < 1e-9, `got ${out['2026-11-11']}`);
+    });
+});
+
+describe('tokens named by symbol', () => {
+    test("ANTon is Ondo's tokenized Anthropic stock on CoinGecko", async () => {
+        const { coinId } = await import('./prices/token-map.js');
+        equal(coinId('ANTon'), 'anthropic-ondo-tokenized-stock');
+        equal(coinId('anton'), 'anthropic-ondo-tokenized-stock');
     });
 });

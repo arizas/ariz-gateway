@@ -2,6 +2,7 @@
 //
 // A liquid-staking token is worth what it redeems for: the contract says how
 // much NEAR one token is, and that rate only drifts upward as rewards accrue.
+// A fund token can publish its NAV the same way (cNEAR, below).
 // Pricing such a token by its ticker is a trap — lst-pool.near calls itself
 // "stNEAR", exactly like Meta Pool's token, and CoinGecko's "staked-near" is
 // Meta Pool's. On one real account that valued 982 tokens bought at 1.02 NEAR
@@ -23,6 +24,17 @@ export const RATE_TOKENS = {
         method: 'get_exchange_rate',
         since: '2026-09-01',
         parse: v => Number(BigInt(v.numerator) * 10n ** 12n / BigInt(v.denominator)) / 1e12,
+    },
+    // cNEAR is not staking: it is a fund token issued and redeemed for NEAR,
+    // whose owner publishes NEAR per cNEAR (in yoctoNEAR) about once a
+    // weekday, from the last issuance, redemption or fund NAV. Unlike a
+    // staking rate it moves both ways. No market lists it, so this
+    // published rate is the only price there is.
+    'cnear.assetize.near': {
+        base: 'near',
+        method: 'ft_price',
+        since: '2026-10-01',
+        parse: v => Number(BigInt(v) * 10n ** 12n / 10n ** 24n) / 1e12,
     },
 };
 

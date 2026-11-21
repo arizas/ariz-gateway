@@ -7,6 +7,10 @@ const COIN_IDS = {
     ada: 'cardano',
     adi: 'adi-token',
     aleo: 'aleo',
+    // Ondo's tokenized Anthropic stock. Checked by contract: CoinGecko's entry
+    // lists the BNB contract that NEAR Intents bridges as
+    // bnb-0x343ccbc9f8409f862008b7abebfff20ecf935c75.omdep.near.
+    anton: 'anthropic-ondo-tokenized-stock',
     apt: 'aptos',
     arb: 'arbitrum',
     aster: 'aster-2',
