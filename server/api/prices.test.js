@@ -583,4 +583,9 @@ describe('tokens named by symbol', () => {
         equal(coinId('ANTon'), 'anthropic-ondo-tokenized-stock');
         equal(coinId('anton'), 'anthropic-ondo-tokenized-stock');
     });
+
+    test('NBTC is bridged Bitcoin, priced as BTC', async () => {
+        const { coinId } = await import('./prices/token-map.js');
+        equal(coinId('NBTC'), 'bitcoin');
+    });
 });

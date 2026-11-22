@@ -97,6 +97,10 @@ const COIN_IDS = {
 //   tokens.
 const SYMBOL_ALIASES = {
     wnear: 'near',
+    // nBTC (nbtc.bridge.near) is Bitcoin bridged to NEAR and redeemable one
+    // for one; 1Click lists it as BTC at BTC's price. Not by ticker: three
+    // unrelated CoinGecko coins call themselves NBTC.
+    nbtc: 'btc',
     'usdt.e': 'usdt',
     'usdc.e': 'usdc'
 };
