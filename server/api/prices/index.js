@@ -27,6 +27,11 @@ const CURRENCYLIST_VS = [
 const SPOT_TTL_MS = 60_000;
 const spotCache = new Map();
 
+/** Tests only: forget cached spot answers. */
+export function __clearSpotCache() {
+    spotCache.clear();
+}
+
 async function spotCached(key, fetcher) {
     const entry = spotCache.get(key);
     if (entry && entry.expiresAt > Date.now()) return entry.value;
@@ -59,6 +64,13 @@ export async function fetchNoPriceTokens() {
         const tokens = await listCachedTokens();
         const noPrice = [];
         for (const symbol of tokens) {
+            // A token mapped to a CoinGecko id is listed, whatever its cache
+            // says. Its history may have been cached empty before the mapping
+            // existed (ANTon, cached the day before CoinGecko had it), and the
+            // client never asks for a token in this set while the hourly update
+            // skips empty ones — so it would stay unpriced for good. Left out,
+            // the client's next lookup refetches it.
+            if (coinId(symbol) !== symbol) continue;
             const data = await readTokenPrices(symbol);
             if (!data || Object.keys(data).length === 0) {
                 noPrice.push(symbol);

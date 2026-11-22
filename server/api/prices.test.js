@@ -8,6 +8,7 @@ import {
     fetchCurrencyList,
     fetchCurrent,
     fetchNoPriceTokens,
+    __clearSpotCache,
     fetchPriceHistory,
     fetchRateTokens,
     runEodUpdate
@@ -319,6 +320,39 @@ describe('prices', () => {
         const noPrice = await fetchNoPriceTokens();
 
         deepEqual([...noPrice].sort(), ['ariz', 'scamtoken']);
+    });
+
+    test('a token mapped to a CoinGecko id is never in the no-price set, even cached empty', async () => {
+        await mkdir(join(dataDir, 'prices'), { recursive: true });
+        // Cached empty before the mapping existed — CoinGecko listed it a day later.
+        await writeFile(join(dataDir, 'prices', 'anton.json'), JSON.stringify({}));
+        await writeFile(join(dataDir, 'prices', 'scamtoken.json'), JSON.stringify({}));
+        globalThis.fetch = async (url) => { throw new Error(`unexpected fetch ${url}`); };
+        __clearSpotCache();
+        const noPrice = await fetchNoPriceTokens();
+        ok(noPrice.includes('scamtoken'), `an unlisted token still is: ${noPrice}`);
+        ok(!noPrice.includes('anton'), `a mapped token is not: ${noPrice}`);
+    });
+
+    test('a token cached empty is fetched again when asked, and filled once listed', async () => {
+        await mkdir(join(dataDir, 'prices'), { recursive: true });
+        await writeFile(join(dataDir, 'prices', 'anton.json'), JSON.stringify({}));
+        await writeFile(join(dataDir, 'forex', 'nok.json'), JSON.stringify({ '2026-11-19': 10, '2026-11-20': 10 })).catch(async () => {
+            await mkdir(join(dataDir, 'forex'), { recursive: true });
+            await writeFile(join(dataDir, 'forex', 'nok.json'), JSON.stringify({ '2026-11-19': 10, '2026-11-20': 10 }));
+        });
+        const asked = [];
+        globalThis.fetch = async (url) => {
+            const u = url.toString();
+            asked.push(u);
+            if (u.includes('coins.llama.fi')) return llamaChartResponse('anthropic-ondo-tokenized-stock', {});
+            if (u.includes('coingecko.com')) return jsonResponse({ prices: [[Date.parse('2026-11-19T00:00:00Z'), 108.2], [Date.parse('2026-11-20T00:00:00Z'), 94.34]] });
+            if (u.includes('frankfurter')) return jsonResponse({ rates: {} });
+            throw new Error(`unexpected fetch ${u}`);
+        };
+        const out = await fetchPriceHistory('ANTon', 'USD');
+        ok(asked.some(u => u.includes('anthropic-ondo-tokenized-stock')), `asked by its CoinGecko id: ${asked.join(' ')}`);
+        equal(out['2026-11-20'], 94.34);
     });
 });
 
